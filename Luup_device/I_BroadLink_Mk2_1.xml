@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<implementation>
+    <specVersion>
+        <major>1</major>
+        <minor>0</minor>
+    </specVersion>
+    <files>L_BroadLink_Mk2_1.lua</files>
+
+    <settings>
+        <protocol>raw</protocol>
+    </settings>
+
+    <startup>luaStartUp</startup>
+
+    <actionList>
+        <action>
+        <serviceId>urn:upnp-org:serviceId:SwitchPower1</serviceId>
+        <name>SetTarget</name>
+        <run>setTarget(lul_device, lul_settings.newTargetValue)</run>
+        </action>
+
+        <action>
+        <serviceId>urn:a-lurker-com:serviceId:IrTransmitter1</serviceId>
+        <name>SendProntoCode</name>
+        <run>sendProntoCode(lul_device, lul_settings.ProntoCode)</run>
+        </action>
+
+        <action>
+        <serviceId>urn:a-lurker-com:serviceId:IrTransmitter1</serviceId>
+        <name>SendCode</name>
+        <run>sendCode(lul_device, lul_settings.Code)</run>
+        </action>
+    </actionList>
+</implementation>

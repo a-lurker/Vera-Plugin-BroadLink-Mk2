@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<scpd xmlns="urn:schemas-upnp-org:service-1-0">
+    <specVersion>
+        <major>1</major>
+        <minor>0</minor>
+    </specVersion>
+
+    <serviceStateTable>
+        <stateVariable sendEvents="no">
+        <name>A_ARG_TYPE_Code</name>
+        <shortCode>Code</shortCode>
+        <dataType>string</dataType>
+        </stateVariable>
+
+        <stateVariable sendEvents="no">
+        <name>A_ARG_TYPE_ProntoCode</name>
+        <shortCode>ProntoCode</shortCode>
+        <dataType>string</dataType>
+        </stateVariable>
+    </serviceStateTable>
+
+    <actionList>
+         <action>
+            <name>SendCode</name>
+            <argumentList>
+                <argument>
+                    <name>Code</name>
+                    <direction>in</direction>
+                    <relatedStateVariable>A_ARG_TYPE_Code</relatedStateVariable>
+                </argument>
+            </argumentList>
+        </action>
+         <action>
+            <name>SendProntoCode</name>
+            <argumentList>
+                <argument>
+                    <name>ProntoCode</name>
+                    <direction>in</direction>
+                    <relatedStateVariable>A_ARG_TYPE_ProntoCode</relatedStateVariable>
+                </argument>
+            </argumentList>
+        </action>
+    </actionList>
+</scpd>

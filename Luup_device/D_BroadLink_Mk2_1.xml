@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+    <specVersion>
+      <major>1</major>
+      <minor>0</minor>
+    </specVersion>
+
+    <device>
+        <deviceType>urn:schemas-a-lurker-com:device:BroadLink_Mk2:1</deviceType>
+        <friendlyName>BroadLink Mk2</friendlyName>
+        <staticJson>D_BroadLink_Mk2_1.json</staticJson>
+        <modelDescription>BroadLink interface</modelDescription>
+        <modelName>Generic WiFi</modelName>
+        <modelNumber>1.0</modelNumber>
+        <Category_Num>11</Category_Num>
+        <handleChildren>1</handleChildren>
+
+        <serviceList>
+            <service>   <!-- parent device: functions unique to this file -->
+                <serviceType>urn:schemas-a-lurker-com:service:BroadLink_Mk2:1</serviceType>
+                <serviceId>urn:a-lurker-com:serviceId:BroadLink_Mk2_1</serviceId>
+                <SCPDURL>S_BroadLink_Mk2_1.xml</SCPDURL>
+            </service>
+        </serviceList>
+
+        <implementationList>   <!-- the one and only implementation file used for the parent and its children -->
+            <implementationFile>I_BroadLink_Mk2_1.xml</implementationFile>
+        </implementationList>
+
+    </device>
+</root>

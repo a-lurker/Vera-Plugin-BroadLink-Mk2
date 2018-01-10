@@ -1,0 +1,18 @@
+{
+    "flashicon": "https://a-lurker.github.io/icons/BroadLink_50_50.png",
+    "default_icon": "https://a-lurker.github.io/icons/BroadLink_50_50.png",
+    "inScene": "1",
+    "Tabs": [
+        {
+            "Label": {
+                "lang_tag": "advanced",
+                "text": "Advanced"
+            },
+            "Position": "2",
+            "TabType": "javascript",
+            "ScriptName": "shared.js",
+            "Function": "advanced_device"
+        }
+    ],
+    "DeviceType": "urn:schemas-a-lurker-com:device:BroadLink_Mk2:1"
+}
