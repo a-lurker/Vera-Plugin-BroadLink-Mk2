@@ -3,4 +3,4 @@
 Connect Vera to miscellaneous BroadLink devices.
 
 More information here:
-- http://forum.micasaverde.com/index.php?topic=23657.0
+- http://forum.micasaverde.com/index.php/topic,53871.0.html
