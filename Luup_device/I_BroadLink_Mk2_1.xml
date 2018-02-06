@@ -30,5 +30,17 @@
         <name>SendCode</name>
         <run>sendCode(lul_device, lul_settings.Code)</run>
         </action>
+
+        <action>
+        <serviceId>urn:a-lurker-com:serviceId:IrTransmitter1</serviceId>
+        <name>LearnIRCode</name>
+        <run>learnIRCode(lul_device)</run>
+        </action>
+
+        <action>
+        <serviceId>urn:a-lurker-com:serviceId:IrTransmitter1</serviceId>
+        <name>LearnRFCode</name>
+        <run>learnRFCode(lul_device)</run>
+        </action>
     </actionList>
 </implementation>

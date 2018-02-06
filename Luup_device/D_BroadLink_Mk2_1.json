@@ -1,7 +1,7 @@
 {
     "flashicon": "https://a-lurker.github.io/icons/BroadLink_50_50.png",
     "default_icon": "https://a-lurker.github.io/icons/BroadLink_50_50.png",
-    "inScene": "1",
+    "inScene": "0",
     "Tabs": [
         {
             "Label": {

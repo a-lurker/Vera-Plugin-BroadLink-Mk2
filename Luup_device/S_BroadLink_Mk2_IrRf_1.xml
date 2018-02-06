@@ -40,5 +40,15 @@
                 </argument>
             </argumentList>
         </action>
+         <action>
+            <name>LearnIRCode</name>
+            <argumentList>
+            </argumentList>
+        </action>
+         <action>
+            <name>LearnRFCode</name>
+            <argumentList>
+            </argumentList>
+        </action>
     </actionList>
 </scpd>
