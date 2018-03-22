@@ -1,5 +1,5 @@
 -- a-lurker, copyright 2017 & 2018
--- First release 10 December 2017; updated 18 Feb 2018
+-- First release 10 December 2017; updated 22 Mar 2018
 
 -- Tested on a Vera 3
 
@@ -52,7 +52,7 @@
 
 local PLUGIN_NAME      = 'BroadLink_Mk2'
 local PLUGIN_SID       = 'urn:a-lurker-com:serviceId:'..PLUGIN_NAME..'_1'
-local PLUGIN_VERSION   = '0.53'
+local PLUGIN_VERSION   = '0.54'
 local THIS_LUL_DEVICE  = nil
 
 -- your WiFi SSID and PASS. Only required if not using the phone
@@ -110,6 +110,7 @@ local m_PollEnable     = ''    -- is set to either: '0' or '1'
 local m_PollLastState  = ''
 local m_msgCount       = -1
 local m_doEncodeDecode = true  -- used for testing purposes only
+local m_json           = nil
 local m_IRScanCount    = 0
 local m_RFScanCount    = 0
 
@@ -190,31 +191,30 @@ local plData = {
 
 --[[
     This look up table describes the capabilities of a physical Broadlink device and has ptrs to the associated
-    functions. An example element in the blDevs array is shown below. The index is the internal hex number
+    functions. An example element in the blDevs table is shown below. The index is the internal hex number
     that represents each type of Broadlink device. In the example 0x2787 is the value for a 'RM2 Pro Plus 2'
 
-    blDevLookup = 0x2787
-    blDevs[blDevLookup].desc       = 'RM2 Pro Plus 2'
-    blDevs[blDevLookup].devs.ir    = ctrlrRf           -- ptr to ctrlrRf function
-    blDevs[blDevLookup].devs.temp  = getTemperature    -- ptr to getTemperature function
-    blDevs[blDevLookup].devs.rf315 = ctrlrRf           -- ptr to ctrlrRf function
-    blDevs[blDevLookup].devs.rf433 = ctrlrRf           -- ptr to ctrlrRf function
+    blDeviceType = 0x2787
+    blDevs[blDeviceType].desc       = 'RM2 Pro Plus 2'
+    blDevs[blDeviceType].devs.ir    = ctrlrRf           -- ptr to ctrlrRf function
+    blDevs[blDeviceType].devs.temp  = getTemperature    -- ptr to getTemperature function
+    blDevs[blDeviceType].devs.rf315 = ctrlrRf           -- ptr to ctrlrRf function
+    blDevs[blDeviceType].devs.rf433 = ctrlrRf           -- ptr to ctrlrRf function
 ]]
 
 local blDevs = {}
 
 --[[
-blDevices[blId] = {   blId: the id of a BroadLink physical device: we'll use the BroadLink device's mac address
+blDevices[blId] = {   -- blId, string, the id of a BroadLink physical device: we'll use the BroadLink device's mac address
 
     -- the following is derived from broadcasted discovery process
-    blIp           = ip,                         -- ip address of  the host BroadLink device
-    blMac          = mac,                        -- mac address of the host BroadLink device
-    blDevLookup    = blDevLookup,                -- id of the host BroadLink device 'type'
-    blDesc         = blDevs[blDevLookup].desc,   -- description of the host BroadLink device eg "RM pro", etc
+    blIp           = ip,                         -- string: ip address of  the host BroadLink device
+    blDeviceType   = blDeviceType,               -- number: id of the host BroadLink device 'type'
+    blDesc         = blDevs[blDeviceType].desc,  -- string: description of the host BroadLink device eg "RM pro", etc
 
-    -- the following derived from authorisation process
-    blInternalId   = internalId,                 -- the id  returned from the BroadLink host device during the authorisation process
-    blKey          = key,                        -- the key returned from the BroadLink host device during the authorisation process
+    -- the following is derived from authorisation process
+    blInternalId   = internalId,                 -- string: the id  returned from the BroadLink host device during the authorisation process
+    blKey          = key                         -- string: the key returned from the BroadLink host device during the authorisation process
 }
 ]]
 
@@ -223,12 +223,12 @@ local blDevices = {}
 --[[
 All the Vera devices eg: temperature sensors, relays, etc and in which physical BroadLink device they are located
 
-veraDevices[altId] = {   altId, as used by the this vera plugin, of the form: host mac address plus the vera function type
-    blId           = blId                        -- the id of the BroadLink parent device - which is simply its mac address
+veraDevices[altId] = {   -- altId, as used by the this vera plugin, of the form: host mac address plus the vera function type
+    blId           = blId,                       -- the id of the BroadLink parent device - which is simply its mac address
     veraDesc       = veraDesc,                   -- vera device description, as seen in the user interface
     veraDevice     = dev,                        -- vera device type - for child creation
-    veraFile       = file                        -- vera device file - for child creation
-    veraFunc       = func                        -- vera device function
+    veraFile       = file,                       -- vera device file - for child creation
+    veraFunc       = func,                       -- vera device function
     veraId         = lul_device.id               -- vera device's id
 }
 ]]
@@ -280,6 +280,41 @@ local function updateVariable(varK, varV, sid, id)
     if ((currentValue ~= newValue) or (currentValue == nil)) then
         luup.variable_set(sid, varK, newValue, id)
     end
+end
+
+-- If possible, get a JSON parser. If none available, returns nil. Note that typically UI5 may not have a parser available.
+local function loadJsonModule()
+    local jsonModules = {
+        'dkjson',               -- UI7 firmware
+        'openLuup.json',        -- http://forum.micasaverde.com/index.php?topic=29989.0
+        'akb-json',             -- http://forum.micasaverde.com/index.php?topic=29989.0
+        'json',                 -- OWServer plugin
+        'json-dm2',             -- dataMine plugin
+        'dropbox_json_parser'   -- dropbox plugin
+    }
+
+    local ptr  = nil
+    local json = nil
+    for n = 1, #jsonModules do
+        -- require does not load the module, if it's already loaded
+        -- Vera has overloaded require to suit their requirements, so it works differently from openLuup
+        -- openLuup:
+        --    ok:     returns true or false indicating if the module was loaded successfully or not
+        --    result: contains the ptr to the module or an error string showing the path(s) searched for the module
+        -- Vera:
+        --    ok:     returns true or false indicating the require function executed but require may have or may not have loaded the module
+        --    result: contains the ptr to the module or an error string showing the path(s) searched for the module
+        --    log:    log reports 'luup_require can't find xyz.json'
+        local ok, result = pcall(require, jsonModules[n])
+        ptr = package.loaded[jsonModules[n]]
+        if (ptr) then
+            json = ptr
+            debug('Using: '..jsonModules[n])
+            break
+        end
+    end
+    if (not json) then debug('No JSON library found') return json end
+    return json
 end
 
 -- Log the outcome (hex) - only used for testing
@@ -629,96 +664,29 @@ local function addToBroadlinkPhysicalDevicesList(rxMsg, ip)
     local blId = mac
 
     -- get the hex number that represents this particular BroadLink device
-    local blDevLookup = rxMsgTab[0x35+1]*256 + rxMsgTab[0x34+1]
+    local blDeviceType = rxMsgTab[0x35+1]*256 + rxMsgTab[0x34+1]
 
-    if (not blDevs[blDevLookup]) then
-        debug(string.format('The BroadLink device at IP address %s and of type 0x%04x is not known to this plugin', ip, blDevLookup))
+    if (not blDevs[blDeviceType]) then
+        debug(string.format('The BroadLink device at IP address %s and of type 0x%04x is not known to this plugin', ip, blDeviceType))
         return
     end
 
     blDevices[blId] = {
         blIp         = ip,
-        blMac        = mac,
-        blDevLookup  = blDevLookup,
-        blDesc       = blDevs[blDevLookup].desc,
+        blDeviceType = blDeviceType,
+        blDesc       = blDevs[blDeviceType].desc,
 
         -- the following will be filled in during the authorisation process
         blInternalId = '????',
         blKey        = initialKey
     }
 
-    debug(blId)
+    debug(blId)   -- the BroadLink device mac address
     debug(blDevices[blId].blIp)
-    debug(blDevices[blId].blMac)   -- same as blId
-    debug(string.format('BroadLink device type: 0x%04x', blDevices[blId].blDevLookup))
+    debug(string.format('BroadLink device type: 0x%04x', blDevices[blId].blDeviceType))
     debug(blDevices[blId].blDesc)
     debug(blDevices[blId].blInternalId)
     debug(blDevices[blId].blKey)
-
-    local BLink = blDevices[blId].blDesc..' - '
-    local altId, veraDesc, dev, file = '', '', '', ''
-
-    for k, v in pairs(blDevs[blDevLookup].devs) do
-        altId = mac..'_'..k
-        debug('k = '..k)
-        -- get the function for this vera device
-        func = v
-        -- ready for relays
-        dev, file = DEV.BINARY_LIGHT, FILE.BINARY_LIGHT
-        if (k=='rly1') then
-            veraDesc = BLink..'relay 1'
-        elseif (k=='rly2') then
-            veraDesc = BLink..'relay 2'
-        elseif (k=='rly3') then
-            veraDesc = BLink..'relay 3'
-        elseif (k=='rly4') then
-            veraDesc = BLink..'relay 4'
-        elseif (k=='humidity') then
-            veraDesc = BLink..'humidity 1'
-            dev, file = DEV.HUMIDITY_SENSOR, FILE.HUMIDITY_SENSOR
-        elseif (k=='ir') then
-            veraDesc = BLink..'IR 1'
-            dev, file = DEV.IR_TRANSMITTER, FILE.IR_TRANSMITTER
-        elseif (k=='lightLevel') then
-            veraDesc = BLink..'light level 1'
-            dev, file = DEV.LIGHT_SENSOR, FILE.LIGHT_SENSOR
-        elseif (k=='noise') then
-            veraDesc = BLink..'noise level 1'
-            dev, file = DEV.GENERIC_SENSOR, FILE.GENERIC_SENSOR
---        elseif (k=='rf315') then
---            veraDesc = BLink..'RF 315 1'
---            dev, file = DEV.IR_TRANSMITTER, FILE.IR_TRANSMITTER
---        elseif (k=='rf433') then
---            veraDesc = BLink..'RF 433 1'
---            dev, file = DEV.IR_TRANSMITTER, FILE.IR_TRANSMITTER
-        elseif (k=='temp') then
-            veraDesc = BLink..'temperature 1'
-            dev, file = DEV.TEMPERATURE_SENSOR, FILE.TEMPERATURE_SENSOR
-        elseif (k=='voc') then
-            veraDesc = BLink..'light level 1'
-            dev, file = DEV.GENERIC_SENSOR, FILE.GENERIC_SENSOR
-        else
-            altId = nil
-            debug('k = '..k..' has no associated code at this time')
-        end
-
-        if (altId) then
-            veraDevices[altId] = {
-                blId       = blId,     -- same as mac address
-                veraDesc   = veraDesc,
-                veraDevice = dev,
-                veraFile   = file,
-                veraFunc   = func
-            }
-
-            debug(altId)
-            debug(veraDevices[altId].blId)
-            debug(veraDevices[altId].veraDesc)
-            debug(veraDevices[altId].veraDevice)
-            debug(veraDevices[altId].veraFile)
-            debug(veraDevices[altId].veraFunc)
-        end
-    end
 end
 
 -- Make the BroadLink "payload" header
@@ -738,7 +706,7 @@ local function makeCmdHeader(blId, payloadTab, command)
   --headerTab[0x08+1] = 0x00   -- msb connection id (is already set to 0x00)
 
     -- insert the id of the host BroadLink device 'type' into the header: 0x25 to 0x24
-    insertMsbLsb(headerTab, idxDeviceId, blDevices[blId].blDevLookup)
+    insertMsbLsb(headerTab, idxDeviceId, blDevices[blId].blDeviceType)
 
     headerTab[0x26+1] = command  -- command is typically 0x65, 0x66 or 0x6a
 
@@ -756,7 +724,7 @@ local function makeCmdHeader(blId, payloadTab, command)
 
     -- insert the mac address into the header: 0x2f to 0x2a
     charIdx = 0x2f+1
-    for c in blDevices[blId].blMac:gmatch('%x%x') do
+    for c in blId:gmatch('%x%x') do
         headerTab[charIdx] = tonumber(c,16)
         charIdx = charIdx-1
     end
@@ -834,8 +802,8 @@ local function makePairingMsg()
     end
 
     msgTab[0x26+1] = blCmds.pairing.tx   -- "pairing" request ID
-    msgTab[0x84+1] = ssidLen             -- insert msg length
-    msgTab[0x85+1] = passLen             -- insert msg length
+    msgTab[0x84+1] = ssidLen             -- insert ssid length
+    msgTab[0x85+1] = passLen             -- insert pw length
     msgTab[0x86+1] = securityType        -- request WPA2
 
     -- always gets done last
@@ -1118,7 +1086,7 @@ local function sendReceive(msgType, txMsgTab, blId)
     -- decrypt the payload
     -- The "pairing" message doesn't encrypt/decrypt, so the key passed into this function will be
     -- nil on that occasion. Before authorisation is completed, the key will equal the "initialKey".
-    -- After authorisation it will be key supplied by the discovery process.
+    -- After authorisation it will be the key supplied by the discovery process.
     local payloadTab = {}
     if (m_doEncodeDecode and key) then
         payloadTab = encryptDecrypt(key, rxedPayloadTab, false)
@@ -1128,8 +1096,8 @@ local function sendReceive(msgType, txMsgTab, blId)
 
     if ((#payloadTab > 0) and (not validPayloadChecksum(rxMsgTab, payloadTab))) then debug('Error: rx\'ed payload checksum incorrect',50) return ok end
 
-    -- show the full received message complete with decoded payload
-    tableDump('Received: '..msgType..': rxMsg length = '..tostring(rxMsgLen)..' decoded msg follows:',  headerTab)
+    -- show the full received message complete with decrypted payload
+    tableDump('Received: '..msgType..': rxMsg length = '..tostring(rxMsgLen)..' decrypted msg follows:',  headerTab)
     tableDump('Rx\'ed payload follows:', payloadTab)
 
     ok = true
@@ -1222,25 +1190,26 @@ local function broadcastDiscoverDevicesMsg()
     return ok
 end
 
--- Send the "auth" message to the BroadLink device
--- returns true if the authorisation was successful
-local function getAuthorisation(blId)
-    local ok, payloadTab = sendReceive('Authorisation', makeAuthorisationMsg(blId), blId)
-    if (not ok) then return ok end
+-- Send the "auth" message to each BroadLink devices. This loads blKey & blInternalId
+local function getAuthorisation()
+    for blId,_ in pairs(blDevices) do
+        local ok, payloadTab = sendReceive('Authorisation', makeAuthorisationMsg(blId), blId)
+        if (ok) then
+            -- extract the blInternalId from the response
+            local strTab = {}
+            for i = 3+1, 0+1, -1 do table.insert(strTab, string.format('%02x', payloadTab[i])) end
+            blDevices[blId].blInternalId = table.concat(strTab)
 
-    -- extract the blInternalId from the response
-    local strTab = {}
-    for i = 3+1, 0+1, -1 do table.insert(strTab, string.format('%02x', payloadTab[i])) end
-    blDevices[blId].blInternalId = table.concat(strTab)
+            -- extract the key from the response
+            strTab = {}
+            for i = 4+1, 19+1 do table.insert(strTab, string.format('%02x', payloadTab[i])) end
+            blDevices[blId].blKey = table.concat(strTab)
 
-    -- extract the key from the response
-    strTab = {}
-    for i = 4+1, 19+1 do table.insert(strTab, string.format('%02x', payloadTab[i])) end
-    blDevices[blId].blKey = table.concat(strTab)
-
-    debug(string.format('blKey: %s, blInternalId: %s', blDevices[blId].blKey, blDevices[blId].blInternalId),50)
-
-    return ok
+            debug(string.format('blKey: %s, blInternalId: %s', blDevices[blId].blKey, blDevices[blId].blInternalId),50)
+        else
+            debug('This device is probably offline - mac address: '..blId)
+        end
+    end
 end
 
 -- Get the temperature from a BroadLink device
@@ -1252,7 +1221,7 @@ local function getTemperature(blId)
     -- extract the temperature status from the payload
     local temperature = payloadTab[plData.temperature.msb] + payloadTab[plData.temperature.lsb]/10
 
-    return temperature, ok
+    return ok, temperature
 end
 
 -- Get the energy from a BroadLink device
@@ -1264,7 +1233,7 @@ local function getEnergy(blId)
     -- extract the energy status from the payload in Watt-hour (Wh)
     local energy = payloadTab[plData.energy.msb]*256 + payloadTab[plData.energy.isb] + payloadTab[plData.energy.lsb]/100
 
-    return energy, ok
+    return ok, energy
 end
 
 -- Get the relay status from a BroadLink device
@@ -1273,10 +1242,10 @@ local function updateStatus(blId, lul_device, relay)
     local status = 0
     local ok = false
     local payloadTab = {}
-    local blDevLookup = blDevices[blId].blDevLookup
+    local blDeviceType = blDevices[blId].blDeviceType
 
     -- all devices are considered to be a single relay except the MP1 & SP1
-    if (blDevLookup == 0x7547) then -- mp1 power strip with multiple relays
+    if (blDeviceType == 0x4ef7) then -- MP1 power strip with multiple relays
         -- 0x00 (off) or 0x01 (on) for each relay bit
         ok, payloadTab = sendReceive('Get status: MP1 relays', makeMP1StatusMsg(blId), blId)
         if (not ok) then return ok end
@@ -1294,8 +1263,8 @@ local function updateStatus(blId, lul_device, relay)
                 result = result-product
             end
         end
-    elseif (blDevLookup == 0x0000) then -- SP1 relay with no status feedback
-    -- HACK elseif ((blDevLookup == 0x0000) or (blDevLookup == 0x2787)) then -- TESTING
+    elseif (blDeviceType == 0x0000) then -- SP1 relay with no status feedback
+    -- HACK elseif ((blDeviceType == 0x0000) or (blDeviceType == 0x2787)) then -- TESTING
         -- Do SP1s make their status available? - seems that they don't. So there is nothing to do.
         return true
     else -- single relay
@@ -1368,11 +1337,12 @@ function lookForLearntBroadlinkRfCode(blId)
         -- That is: 0x19 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
         local ok, payloadTab = sendReceive('Start RF Remote learn', makeSimpleMsg(blId, 0x10, plCmds.rfLearnStart), blId)
 
-        if (not ok) then m_RfScanningState = RF.ABORT_1
-        else
+        if (ok) then
             -- check for a learnt RF frequency every 4 seconds for 4*8=32 seconds
             m_RFScanCount = 8
             m_RfScanningState = RF.GET_FREQ
+        else
+            m_RfScanningState = RF.ABORT_1
         end
     elseif (m_RfScanningState == RF.GET_FREQ) then
         m_RFScanCount = m_RFScanCount-1
@@ -1417,8 +1387,7 @@ function lookForLearntBroadlinkRfCode(blId)
         -- send the "have we got a learnt code" command
         local ok, payloadTab = sendReceive('Retrieving learnt frequency and code', makeSimpleMsg(blId, 0x10, plCmds.irGetCode), blId)
 
-        if (not ok) then m_RfScanningState = RF.ABORT_1
-        else
+        if (ok) then
             -- Got a learnt code. Extract the code from the payload.
             local codeTab = {}
             for n = plData.rfCodeIdx0, #payloadTab do table.insert(codeTab, string.format('%02x', payloadTab[n])) end
@@ -1429,6 +1398,8 @@ function lookForLearntBroadlinkRfCode(blId)
 
             local ok, payloadTab = sendReceive('Stop RF learn', makeSimpleMsg(blId, 0x10, plCmds.rfLearnStop), blId)
             return   -- success!!
+        else
+            m_RfScanningState = RF.ABORT_1
         end
     else
         debug('Error: unknown state - aborting')
@@ -1697,8 +1668,81 @@ local function setDeviceConfiguration()
 
 --[[
     Other BroadLink devices:
-    'TC2' Touch Control: 1 to 3 gang switches; is a slave device and is typically controlled by a RM Pro + using 433 MHz
+    'TC2' Touch Control: 1 to 3 gang switches; is a slave device and is typically controlled by a 'RM Pro +' using 433 MHz
 ]]
+end
+
+-- Go through all the BroadLink devices and build up a table of the children they will use
+local function setVeraDevices()
+    for blId, blDevice in pairs(blDevices) do
+        local mac   = blId
+        local BLink = blDevice.blDesc..' - '
+        local altId, veraDesc, dev, file = '', '', '', ''
+
+        -- get the info for all the children this BroadLink device will need
+        for k, v in pairs(blDevs[blDevice.blDeviceType].devs) do
+            altId = mac..'_'..k
+            debug('k = '..k)
+            -- get the function for this vera device
+            func = v
+            -- ready for relays
+            dev, file = DEV.BINARY_LIGHT, FILE.BINARY_LIGHT
+            if (k=='rly1') then
+                veraDesc = BLink..'relay 1'
+            elseif (k=='rly2') then
+                veraDesc = BLink..'relay 2'
+            elseif (k=='rly3') then
+                veraDesc = BLink..'relay 3'
+            elseif (k=='rly4') then
+                veraDesc = BLink..'relay 4'
+            elseif (k=='humidity') then
+                veraDesc = BLink..'humidity 1'
+                dev, file = DEV.HUMIDITY_SENSOR, FILE.HUMIDITY_SENSOR
+            elseif (k=='ir') then
+                veraDesc = BLink..'IR 1'
+                dev, file = DEV.IR_TRANSMITTER, FILE.IR_TRANSMITTER
+            elseif (k=='lightLevel') then
+                veraDesc = BLink..'light level 1'
+                dev, file = DEV.LIGHT_SENSOR, FILE.LIGHT_SENSOR
+            elseif (k=='noise') then
+                veraDesc = BLink..'noise level 1'
+                dev, file = DEV.GENERIC_SENSOR, FILE.GENERIC_SENSOR
+--            elseif (k=='rf315') then
+--                veraDesc = BLink..'RF 315 1'
+--                dev, file = DEV.IR_TRANSMITTER, FILE.IR_TRANSMITTER
+--            elseif (k=='rf433') then
+--                veraDesc = BLink..'RF 433 1'
+--                dev, file = DEV.IR_TRANSMITTER, FILE.IR_TRANSMITTER
+            elseif (k=='temp') then
+                veraDesc = BLink..'temperature 1'
+                dev, file = DEV.TEMPERATURE_SENSOR, FILE.TEMPERATURE_SENSOR
+            elseif (k=='voc') then
+                veraDesc = BLink..'light level 1'
+                dev, file = DEV.GENERIC_SENSOR, FILE.GENERIC_SENSOR
+            else
+                altId = nil
+                debug('k = '..k..' has no associated code at this time')
+            end
+
+            if (altId) then
+                veraDevices[altId] = {
+                    blId       = mac,     -- we use the BroadLink device mac address to identify the child's parent hardware
+                    veraDesc   = veraDesc,
+                    veraDevice = dev,
+                    veraFile   = file,
+                    veraFunc   = func
+                 -- veraId is set up once the child is created
+                }
+
+                debug(altId)
+                debug(veraDevices[altId].blId)
+                debug(veraDevices[altId].veraDesc)
+                debug(veraDevices[altId].veraDevice)
+                debug(veraDevices[altId].veraFile)
+                debug(veraDevices[altId].veraFunc)
+            end
+        end
+    end
 end
 
 -- Poll the BroadLink device for data. Function needs to be global.
@@ -1708,25 +1752,46 @@ function pollBroadLinkDevices()
     -- poll sensors: temperature, humidity, etc contained in all the discovered BroadLink devices
     -- altId (that is k) is of the form: 'xx:xx:xx:xx:xx:xx_temp' where the xxs make up the mac address
     for k,v in pairs(veraDevices) do
-        local blId     = v.blId
-        local veraId   = v.veraId
-        local sensor   = v.veraDevice
-        local veraFunc = v.veraFunc   -- look up the function to be used for this device
+        local blId       = v.blId
+        local veraId     = v.veraId
+        local veraDevice = v.veraDevice
+        local veraFunc   = v.veraFunc   -- look up the function to be used for this device
 
         -- make sure we have a BroadLink device and an associated function and then go poll all the sensors found
-        if (blId and veraFunc and sensor) then
-            if     (sensor == DEV.DOOR_SENSOR)        then updateVariable('Tripped',            veraFunc(blId), SID.DOOR_SENSOR,        veraId)
-            elseif (sensor == DEV.GENERIC_SENSOR)     then updateVariable('CurrentLevel',       veraFunc(blId), SID.GENERIC_SENSOR,     veraId)
-            elseif (sensor == DEV.HUMIDITY_SENSOR)    then updateVariable('CurrentLevel',       veraFunc(blId), SID.HUMIDITY_SENSOR,    veraId)
-            elseif (sensor == DEV.LIGHT_SENSOR)       then updateVariable('CurrentLevel',       veraFunc(blId), SID.LIGHT_SENSOR,       veraId)
-            elseif (sensor == DEV.MOTION_SENSOR)      then updateVariable('Tripped',            veraFunc(blId), SID.MOTION_SENSOR,      veraId)
-            elseif (sensor == DEV.SMOKE_SENSOR)       then updateVariable('Tripped',            veraFunc(blId), SID.SMOKE_SENSOR,       veraId)
-            elseif (sensor == DEV.TEMPERATURE_SENSOR) then updateVariable('CurrentTemperature', veraFunc(blId), SID.TEMPERATURE_SENSOR, veraId)
-            -- add in more sensors here
-            else
-                debug(string.format('veraId: %d, blId: %s, altId: %s', veraId, blId, k))
-                debug(sensor)
-                debug(v.veraDesc..': device is not a sensor or if a sensor; is not coded for')
+        if (blId and veraFunc and veraDevice) then
+            if     (veraDevice == DEV.DOOR_SENSOR)        then updateVariable('Tripped',      veraFunc(blId), SID.DOOR_SENSOR,     veraId)
+            elseif (veraDevice == DEV.GENERIC_SENSOR)     then updateVariable('CurrentLevel', veraFunc(blId), SID.GENERIC_SENSOR,  veraId)
+            elseif (veraDevice == DEV.HUMIDITY_SENSOR)    then updateVariable('CurrentLevel', veraFunc(blId), SID.HUMIDITY_SENSOR, veraId)
+            elseif (veraDevice == DEV.LIGHT_SENSOR)       then updateVariable('CurrentLevel', veraFunc(blId), SID.LIGHT_SENSOR,    veraId)
+            elseif (veraDevice == DEV.MOTION_SENSOR)      then updateVariable('Tripped',      veraFunc(blId), SID.MOTION_SENSOR,   veraId)
+            elseif (veraDevice == DEV.SMOKE_SENSOR)       then updateVariable('Tripped',      veraFunc(blId), SID.SMOKE_SENSOR,    veraId)
+            elseif (veraDevice == DEV.TEMPERATURE_SENSOR) then
+
+                -- This is a pretty crude correction and is only likely to be close to accurate at one particular
+                -- temperature. Get the temperature and temperature correction factor and update the result.
+                local offsetStr = luup.variable_get(SID.TEMPERATURE_SENSOR, 'TemperatureOffset', veraId)
+                local temperatureOffset = tonumber(offsetStr)
+                if not temperatureOffset then temperatureOffset = 0 end
+                local ok, temperature = veraFunc(blId)
+                if (ok) then
+                    updateVariable('CurrentTemperature', temperature + temperatureOffset, SID.TEMPERATURE_SENSOR, veraId)
+                else
+                    debug(v.veraDesc..': failed to get temperature. Is the device offline?')
+                end
+
+            -- add in more sensors here with additional elseif
+
+            else -- update the status of any relays
+                -- altId (that is k) contains the relay number to use (if any)
+                local _, _, relay = string.find(k, 'rly(%d)')
+                relay = tonumber(relay)
+                if (relay) then
+                    updateStatus(blId, veraId, relay)
+                else
+                    debug(v.veraDesc..': device is not a sensor or if a sensor; is not coded for')
+                    debug(string.format('%s: veraId: %d, blId: %s, altId: %s', v.veraDesc, veraId, blId, k))
+                    debug(v.veraDesc..': '..veraDevice)
+                end
             end
         end
     end
@@ -1780,15 +1845,16 @@ function luaStartUp(lul_device)
         updateVariable('PluginEnabled', pluginEnabled)
     end
 
-    OUR_IP = getOurIPaddress()
-    setDeviceConfiguration()
+    m_json = loadJsonModule()
+    if (not m_json) then return false, 'No JSON module found', PLUGIN_NAME end
 
-    -- Works ok but is not called any where; testing only
-    -- However it would be called like this, in this sort of framework.
-    -- sendPairingMsg()
+    local broadLinkDevices = luup.variable_get(PLUGIN_SID, 'BroadLinkDevices', THIS_LUL_DEVICE)
+    if ((broadLinkDevices == nil) or (broadLinkDevices == '')) then
+        broadLinkDevices = '{}'
+        updateVariable('BroadLinkDevices', broadLinkDevices)
+    end
 
-    broadcastDiscoverDevicesMsg()
-
+    local pollEnable = luup.variable_get(PLUGIN_SID, 'PollEnable', THIS_LUL_DEVICE)
     if ((pollEnable == nil) or (pollEnable == '')) then
         -- turn the polling on
         m_PollEnable = '1'
@@ -1805,6 +1871,33 @@ function luaStartUp(lul_device)
     else
         m_PollInterval = theInterval
     end
+
+    -- Works ok but is not called any where; testing only
+    -- However it would be called like this, in this sort of framework.
+    -- sendPairingMsg()
+
+    setDeviceConfiguration()
+    OUR_IP = getOurIPaddress()
+
+    -- We need the history of past online devices. If a device goes offline temporarily, it
+    -- will still be possible to retain its children during the append process further below.
+    blDevices = m_json.decode(broadLinkDevices)
+    if (not blDevices) then debug('JSON decode error: blDevices is nil') blDevices = {} end
+
+    -- What's out there? Build and/or update the blDevices table.
+    broadcastDiscoverDevicesMsg()
+
+    -- Now that all the BroadLink devices that are actually online have been
+    -- discovered, we can go get their authorisation info: blKey & blInternalId
+    -- Offline devices will just time out and be logged as such.
+    getAuthorisation()
+
+    -- go through all the BroadLink devices and build up a table of the children they will use
+    setVeraDevices()
+
+    -- Note that only the online devices get updated. Offline devices rely on the previous online history loaded
+    -- from the persistent json varaible. This also updates blKey & blInternalId discovered during authorisation.
+    updateVariable('BroadLinkDevices', m_json.encode(blDevices))
 
     -- make a child for each device found as part of each BroadLink device
     local child_devices = luup.chdev.start(THIS_LUL_DEVICE)
@@ -1842,10 +1935,13 @@ function luaStartUp(lul_device)
             '',             -- parameters
             false)          -- embedded
     end
+
+    -- if any of the children specified above are brand new, changed or deleted, then this code will result in a Luup engine restart
     luup.chdev.sync(THIS_LUL_DEVICE, child_devices)
 
     -- find all of the children of this parent device
     -- and then for each child record its Vera id
+    -- if a device is off line, blDevices contains sufficient information to keep the children in place
     for deviceID,v in pairs(luup.devices) do
         if (v.device_num_parent == THIS_LUL_DEVICE) then
             -- for each vera child device we record its vera id
@@ -1854,40 +1950,19 @@ function luaStartUp(lul_device)
             -- The user may have changed the original Vera device description as seen in the UI.
             -- So keep track of any users changes to the device descriptions.
             veraDevices[v.id].veraDesc = v.description
+
+            -- for temperature devices, we'll provide a very crude temperature correction facility
+            if (veraDevices[v.id].veraDevice == DEV.TEMPERATURE_SENSOR) then
+                local temperatureOffset = luup.variable_get(SID.TEMPERATURE_SENSOR, 'TemperatureOffset', deviceID)
+                if ((temperatureOffset == nil) or (temperatureOffset == '')) then
+                    updateVariable('TemperatureOffset', '0', SID.TEMPERATURE_SENSOR, deviceID)
+                end
+            end
         end
     end
 
-    -- Now that all the BroadLink devices have been discovered,
-    -- we can go get all the authorisation info.
-    for k,_ in pairs(blDevices) do
-        getAuthorisation(k)
-    end
-
-    -- update the status of any relays
-    for k,v in pairs(veraDevices) do
-        -- altId (that is k) contains the relay number to use (if any)
-        local _, _, relay = string.find(k, 'rly(%d)')
-        relay = tonumber(relay)
-        if (relay) then updateStatus(v.blId, v.veraId, relay) end
-    end
-
---[[
-    Test code only:
-
-    local altId = 'xx:xx:xx:xx:xx:xx_ir'
-    local lul_device_TEST = {id = altId}
-
-    -- Sony TV mute:  a built code, not a learnt code
-    local leadIn = '0000 0067 0000 001A'
-    local code = '0060 0018 0018 0018 0018 0018 0030 0018 0018 0018 0030 0018 0018 0018 0018 0018 0030 0018 0018 0018 0018 0018 0018 0018 0018 0426'
-    local pCode = leadIn..' '..code..' '..code
-    local blCode = '26003a004e1414141414271414142714141414142714141414141414140003634e1414141414271414142714141414142714141414141414140003630d05'
-    sendCode(lul_device_TEST, pCode)
-    sendCode(lul_device_TEST, blCode)
-]]
-
     -- delay so that the first poll occurs delay interval after start up
-    local INITIAL_POLL_INTERVAL_SECS = 90
+    local INITIAL_POLL_INTERVAL_SECS = 85
     luup.call_delay('pollBroadLinkDevices', INITIAL_POLL_INTERVAL_SECS)
 
     -- required for UI7. UI5 uses true or false for the passed parameter.
