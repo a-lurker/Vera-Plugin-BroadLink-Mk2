@@ -1623,7 +1623,8 @@ local function setBlLabels()
     [0x4e4d] = {desc = 'Dooya DT360E'          },
     [0x51da] = {desc = 'RM4 Mini'              },
     [0x5f36] = {desc = 'RM3 Mini'              },
-    [0x610f] = {desc = 'RM4 Mini'              }
+    [0x610f] = {desc = 'RM4 Mini'              },
+    [0x62be] = {desc = 'RM4 Mini'              }
     }
 end
 
@@ -1703,6 +1704,8 @@ local function setDeviceConfiguration()
     blDevs[0x5f36].plHdrs  = {0x0004, 0x000d}                  --
     blDevs[0x610f].devs.ir = ctrlrRf                           -- 'RM4c Mini'
     blDevs[0x610f].plHdrs  = {0x0004, 0x000d}                  --
+    blDevs[0x62be].devs.ir = ctrlrRf                           -- 'RM4c Mini'
+    blDevs[0x62be].plHdrs  = {0x0004, 0x000d}                  --
 
 --[[
     Other BroadLink devices:
