@@ -1,4 +1,4 @@
--- a-lurker, copyright 2017 & 2018
+-- a-lurker, copyright 2017, 2018, 2019 & 2020
 -- First release 10 December 2017; updated 1 May 2020
 
 -- Tested on openLuup
@@ -52,7 +52,7 @@
 
 local PLUGIN_NAME      = 'BroadLink_Mk2'
 local PLUGIN_SID       = 'urn:a-lurker-com:serviceId:'..PLUGIN_NAME..'_1'
-local PLUGIN_VERSION   = '0.54'
+local PLUGIN_VERSION   = '0.55'
 local THIS_LUL_DEVICE  = nil
 
 -- your WiFi SSID and PASS. Only required if not using the phone
@@ -200,6 +200,7 @@ local plData = {
     blDevs[blDeviceType].devs.temp  = getTemperature    -- ptr to getTemperature function
     blDevs[blDeviceType].devs.rf315 = ctrlrRf           -- ptr to ctrlrRf function
     blDevs[blDeviceType].devs.rf433 = ctrlrRf           -- ptr to ctrlrRf function
+    blDevs[blDeviceType].plHdrs     = {0x0004, 0x000da} -- payload protocol headers (when applicable)
 ]]
 
 local blDevs = {}
@@ -415,6 +416,25 @@ local function validPayloadChecksum(rxMsgTab, payloadTab)
     local overflow = math.floor(checksum / 0x10000)
     checksum = checksum - (overflow * 0x10000)
     return payloadCheckum == checksum
+end
+
+-- Insert payload header for devices that require it
+local function insertPayloadHeader(payloadTab, type, blId)
+  local plHdrs = blDevs[blDevices[blId].blDeviceType].plHdrs
+  if plHdrs == nil then return end
+
+  for i=#payloadTab, 1, -1 do
+    payloadTab[i+2] = payloadTab[i]
+  end
+  insertMsbLsb(payloadTab, {msb = 0x00+2, lsb = 0x00+1}, plHdrs[type])
+end
+
+-- Remove payload header for devices that require it
+local function removePayloadHeader(payloadTab, blId)
+  local hdrLen = blDevs[blDevices[blId].blDeviceType].plHdrs and 2 or 0
+  for i=hdrLen+1, #payloadTab do
+    payloadTab[i] = payloadTab[i+hdrLen]
+  end
 end
 
 -- Responses to tx'ed messages return this count, so the replies to tx'ed messages can be matched together
@@ -898,6 +918,8 @@ end
 local function makeSimpleMsg(blId, packetLength, command)
     local payloadTab = makeEmptyTable(packetLength)
     payloadTab[0x00+1] = command
+    -- insert payload "request" header
+    insertPayloadHeader(payloadTab, 1, blId)
     return headerAndPayload(blId, payloadTab, blCmds.readWrite.tx)
 end
 
@@ -953,6 +975,9 @@ local function makeTxIrRfMsg(blId, irRfCodeTab)
 
     -- we'll issue the set command
     payloadTab[0x00+1] = plCmds.set
+
+    -- Insert "data send" payload header
+    insertPayloadHeader(payloadTab, 2, blId)
 
     if (irRfCodeTab) then
         -- append the IR/RF data table to the payload table
@@ -1309,9 +1334,13 @@ function scanningForBroadlinkIrCode(blId)
         return
     end
 
+    -- Remove the payload header/prefix
+    removePayloadHeader(payloadTab, blId)
+
     -- Got a learnt code. Extract the code from the payload
     local codeTab = {}
     for n = plData.irCodeIdx0, #payloadTab do table.insert(codeTab, string.format('%02x', payloadTab[n])) end
+
     updateVariable('LearntIRCode', table.concat(codeTab, ' '))
 
     -- restore the last polling state
@@ -1642,7 +1671,14 @@ local function setBlLabels()
     [0x278f] = {desc = 'RM Mini Shate'         },
     [0x2714] = {desc = 'A1'                    },
     [0x2722] = {desc = 'S1 SmartOne Alarm Kit' },
-    [0x4e4d] = {desc = 'Dooya DT360E'          }
+    [0x4e4d] = {desc = 'Dooya DT360E'          },
+    [0x51da] = {desc = 'RM4 Mini'              },
+    [0x5f36] = {desc = 'RM3 Mini'              },
+    [0x6070] = {desc = 'RM4 Mini'              },
+    [0x610e] = {desc = 'RM4 Mini'              },
+    [0x610f] = {desc = 'RM4 Mini'              },
+    [0x62bc] = {desc = 'RM4 Mini'              },
+    [0x62be] = {desc = 'RM4 Mini'              }
     }
 end
 
@@ -1716,6 +1752,20 @@ local function setDeviceConfiguration()
         ptr.doorSensor   = nil                                 -- Note: polling is too slow to make this item viable
     ptr = blDevs[0x4e4d].devs                                  -- 'Dooya DT360E'
         -- add in whatever a 'Dooya DT360E' does here          --
+    blDevs[0x51da].devs.ir = ctrlrRf                           -- 'RM4b Mini'
+    blDevs[0x51da].plHdrs  = {0x0004, 0x000d}                  --
+    blDevs[0x5f36].devs.ir = ctrlrRf                           -- 'RM3  Mini'
+    blDevs[0x5f36].plHdrs  = {0x0004, 0x000d}                  --
+    blDevs[0x6070].devs.ir = ctrlrRf                           -- 'RM4c Mini'
+    blDevs[0x6070].plHdrs  = {0x0004, 0x000d}                  --
+    blDevs[0x610e].devs.ir = ctrlrRf                           -- 'RM4? Mini'
+    blDevs[0x610e].plHdrs  = {0x0004, 0x000d}                  --
+    blDevs[0x610f].devs.ir = ctrlrRf                           -- 'RM4c Mini'
+    blDevs[0x610f].plHdrs  = {0x0004, 0x000d}                  --
+    blDevs[0x62bc].devs.ir = ctrlrRf                           -- 'RM4c Mini'
+    blDevs[0x62bc].plHdrs  = {0x0004, 0x000d}                  --
+    blDevs[0x62be].devs.ir = ctrlrRf                           -- 'RM4c Mini'
+    blDevs[0x62be].plHdrs  = {0x0004, 0x000d}                  --
 
 --[[
     Other BroadLink devices:
