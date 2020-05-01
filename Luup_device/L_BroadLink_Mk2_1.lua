@@ -1672,6 +1672,14 @@ local function setBlLabels()
     [0x2714] = {desc = 'A1'                    },
     [0x2722] = {desc = 'S1 SmartOne Alarm Kit' },
     [0x4e4d] = {desc = 'Dooya DT360E'          },
+
+    -- added May 2020
+    [0x27a9] = {desc = 'RM2 Pro Plus_300'      },
+    [0x2797] = {desc = 'RM2 Pro Plus HYC'      },
+    [0x4e4d] = {desc = 'RM2 Pro Plus R1'       },
+    [0x4e4d] = {desc = 'RM2 Pro Plus PP'       },
+
+    -- compliments of bblacey - thank you: devices with new leadin arrangements:
     [0x51da] = {desc = 'RM4 Mini'              },
     [0x5f36] = {desc = 'RM3 Mini'              },
     [0x6070] = {desc = 'RM4 Mini'              },
@@ -1723,7 +1731,7 @@ local function setDeviceConfiguration()
         ptr.ir   = ctrlrRf                                     --
         ptr.temp = getTemperature                              --
     ptr = blDevs[0x272a].devs                                  -- 'RM2 Pro Plus'
-        ptr.ir   = ctrlrRf                                      --
+        ptr.ir   = ctrlrRf                                     --
         ptr.temp = getTemperature                              --
     ptr = blDevs[0x2787].devs                                  -- 'RM2 Pro Plus 2'
         ptr.ir    = ctrlrRf                                    --
@@ -1752,6 +1760,22 @@ local function setDeviceConfiguration()
         ptr.doorSensor   = nil                                 -- Note: polling is too slow to make this item viable
     ptr = blDevs[0x4e4d].devs                                  -- 'Dooya DT360E'
         -- add in whatever a 'Dooya DT360E' does here          --
+
+    -- added May 2020: no idea what these do but will assume they can do IR & temp
+    ptr = blDevs[0x27a9].devs                                  -- 'RM2 Pro Plus_300'
+        ptr.ir   = ctrlrRf                                     --
+        ptr.temp = getTemperature                              --
+    ptr = blDevs[0x2797].devs                                  -- 'RM2 Pro Plus HYC'
+        ptr.ir   = ctrlrRf                                     --
+        ptr.temp = getTemperature                              --
+    ptr = blDevs[0x4e4d].devs                                  -- 'RM2 Pro Plus R1'
+        ptr.ir   = ctrlrRf                                     --
+        ptr.temp = getTemperature                              --
+    ptr = blDevs[0x4e4d].devs                                  -- 'RM2 Pro Plus PP'
+        ptr.ir   = ctrlrRf                                     --
+        ptr.temp = getTemperature                              --
+    
+    -- compliments of bblacey - thank you: devices with new leadin arrangements:
     blDevs[0x51da].devs.ir = ctrlrRf                           -- 'RM4b Mini'
     blDevs[0x51da].plHdrs  = {0x0004, 0x000d}                  --
     blDevs[0x5f36].devs.ir = ctrlrRf                           -- 'RM3  Mini'
