@@ -14,5 +14,5 @@
             "Function": "advanced_device"
         }
     ],
-    "DeviceType": "urn:schemas-a-lurker-com:device:BroadLink_Mk2:1"
+    "device_type": "urn:schemas-a-lurker-com:device:BroadLink_Mk2:1"
 }

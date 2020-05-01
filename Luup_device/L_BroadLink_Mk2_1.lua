@@ -1,7 +1,7 @@
 -- a-lurker, copyright 2017 & 2018
--- First release 10 December 2017; updated 22 Mar 2018
+-- First release 10 December 2017; updated 1 May 2020
 
--- Tested on a Vera 3
+-- Tested on openLuup
 
 --[[
     This program is free software; you can redistribute it and/or
@@ -261,8 +261,8 @@ local function debug(textParm, logLevel)
     end
 end
 
--- If non existent, create the variable
--- Update the variable only if needs to be
+-- If non existent, create the variable. Update
+-- the variable, only if it needs to be updated
 local function updateVariable(varK, varV, sid, id)
     if (sid == nil) then sid = PLUGIN_SID      end
     if (id  == nil) then  id = THIS_LUL_DEVICE end
@@ -286,11 +286,13 @@ end
 local function loadJsonModule()
     local jsonModules = {
         'dkjson',               -- UI7 firmware
-        'openLuup.json',        -- http://forum.micasaverde.com/index.php?topic=29989.0
-        'akb-json',             -- http://forum.micasaverde.com/index.php?topic=29989.0
+        'openLuup.json',        -- https://community.getvera.com/t/pure-lua-json-library-akb-json/185273
+        'akb-json',             -- https://community.getvera.com/t/pure-lua-json-library-akb-json/185273
         'json',                 -- OWServer plugin
         'json-dm2',             -- dataMine plugin
-        'dropbox_json_parser'   -- dropbox plugin
+        'dropbox_json_parser',  -- dropbox plugin
+        'hue_json',             -- hue plugin
+        'L_ALTUIjson'           -- AltUI plugin
     }
 
     local ptr  = nil
@@ -543,7 +545,7 @@ local function prontoCode2blCode(pCode)
     Pronto IR format:
     http://www.majority.nl/files/prontoirformats.pdf
     http://www.remotecentral.com/features/irdisp2.htm
-    http://forum.micasaverde.com/index.php/topic,37268.msg321338.html#msg321338
+    https://community.getvera.com/t/gc100-pronto-code/191951/10
 
     BroadLink IR format:
     https://github.com/mjg59/python-broadlink/issues/57
@@ -650,12 +652,12 @@ local function addToBroadlinkPhysicalDevicesList(rxMsg, ip)
 
     tableDump('Rx\'ed a discovery response: rxMsg length = '..tostring(rxMsgLen), rxMsgTab)
 
-    -- sanity checks
-    if (rxMsgLen ~= 128) then debug('Error: discovery msg - incorrect size',50) return end
+    -- sanity checks - sometimes the "Android RM bridge" or a router will trigger the first check here
+    if (rxMsgLen ~= 128) then debug('Error: discovery msg - incorrect size: '..ip,50) return end
     if (rxMsgTab[0x26+1] ~= blCmds.discoverDevices.rx) then debug('Error: discovery msg - reply id incorrect',50) return end
 
     -- get the mac address contained in the returned message
-    strTab = {}
+    local strTab = {}
     for i = 0x3f+1, 0x3a+1, -1 do table.insert(strTab, string.format('%02x',rxMsgTab[i])) end
 
     -- get the mac address and use it as part of a BroadLink device blId and the Vera device altId
@@ -1218,8 +1220,12 @@ local function getTemperature(blId)
     local ok, payloadTab = sendReceive('Get temperature', makeSimpleMsg(blId, 0x10, plCmds.get), blId)
     if (not ok) then return ok end
 
-    -- extract the temperature status from the payload
-    local temperature = payloadTab[plData.temperature.msb] + payloadTab[plData.temperature.lsb]/10
+    -- extract the msb temperature status from the payload
+    local msb = payloadTab[plData.temperature.msb]
+    -- For reasons completely unknown, the RM Pro randomly returns 0xf9 = 249 dec in the msb. We'll
+    -- quard against this by considering any temperature that's over 70 deg C as being implausible.
+    if (msb >= 70) then return false end
+    local temperature = msb + payloadTab[plData.temperature.lsb]/10
 
     return ok, temperature
 end
@@ -1239,9 +1245,10 @@ end
 -- Get the relay status from a BroadLink device
 -- returns true if the get status was successful
 local function updateStatus(blId, lul_device, relay)
-    local status = 0
-    local ok = false
-    local payloadTab = {}
+    local ok           = false
+    local payloadTab   = {}
+    local status       = 0
+    local nightLight   = 0
     local blDeviceType = blDevices[blId].blDeviceType
 
     -- all devices are considered to be a single relay except the MP1 & SP1
@@ -1252,7 +1259,7 @@ local function updateStatus(blId, lul_device, relay)
 
         -- extract the relay status for each relay
         local result = payloadTab[plData.status]
-        -- mask off the unused upper bits to be sure
+        -- mask off the unused upper bits, keeping bits 0-3
         local result = result % 2^4
 
         -- scan though the four relays looking for the one of interest. A bit library would be good.
@@ -1267,10 +1274,16 @@ local function updateStatus(blId, lul_device, relay)
     -- HACK elseif ((blDeviceType == 0x0000) or (blDeviceType == 0x2787)) then -- TESTING
         -- Do SP1s make their status available? - seems that they don't. So there is nothing to do.
         return true
-    else -- single relay
+    else -- single relay and maybe a night light: refer SP3
         ok, payloadTab = sendReceive('Get status: single relay', makeSimpleMsg(blId, 0x10, plCmds.get), blId)
         if (not ok) then return ok end
-        status = payloadTab[plData.status]
+
+        local result = payloadTab[plData.status]
+        -- mask off the unused upper bits, keeping bits 0-1
+        result = result % 2^2
+        if (result >= 2) then nightLight = 1 end  -- bit 1 is the night light
+        result = result % 2^1
+        if (result == 1) then status = 1 end      -- bit 0 is the power outlet
     end
 
     status = tostring(status)
@@ -1495,8 +1508,9 @@ local function setTarget(lul_device, newTargetValue)
     if (ok) then veraFunc(blId, lul_device, offOn) end
 end
 
--- Service: send an IR or RF code
+-- Service: send an IR pronto code or a Broadlink IR or Broadlink RF code
 local function sendCode(lul_device, irRfCode)
+    debug('Broadlink IR code 2 type = '..type(irRfCode))
     if (not irRfCode) then return end
     if (type(irRfCode) ~= 'string') then return end
     if (20 >= irRfCode:len()) then return end
@@ -1543,6 +1557,37 @@ local function sendProntoCode(lul_device, ProntoCode)
     sendCode(lul_device, ProntoCode)
 end
 
+--[[
+   service: send a Broadlink eControl code
+   Sample input code:
+     as an array:
+     {-78,  6, 28, 0, 12, 14, 15, 26, 27, 15, 15, 26, 15, 26, 15, 26, 15, 26, 15, 26, 15, 26, 15, 27, 26, 15, 27, 15, 27, 0, 2, 93, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+
+     as a string - commas optional:
+     '-78,  6, 28, 0, 12, 14, 15, 26, 27, 15, 15, 26, 15, 26, 15, 26, 15, 26, 15, 26, 15, 26, 15, 27, 26, 15, 27, 15, 27, 0, 2, 93, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0'
+
+   Sample output result:
+     'b2 06 1c 00 0c 0e 0f 1a 1b 0f 0f 1a 0f 1a 0f 1a 0f 1a 0f 1a 0f 1a 0f 1b 1a 0f 1b 0f 1b 00 02 5d 00 00 00 00 00 00 00 00 00 00 00 00'
+]]
+local function sendEControlCode(lul_device, eControlCode)
+    if (type(eControlCode) == 'string') then
+        local eControlCodeStr = eControlCode
+        eControlCode = {}
+        for code in eControlCodeStr:gmatch('%-?%d+') do table.insert(eControlCode, tonumber(code)) end
+    end
+
+    local hexTab = {}
+    for _,v in ipairs(eControlCode) do
+        -- Handle negative values: eg 433MHz leadin code is 0xb2 ie 178dec
+        -- In the e-control json, it is -78dec. So 256+(-78) = 178dec = 0xb2
+        if (v < 0) then v = 256 + v end
+        table.insert(hexTab, string.format('%02x', v))
+    end
+
+    local irRfCode = table.concat(hexTab,' ')
+    sendCode(lul_device, irRfCode)
+end
+
 -- Service: learn a Broadlink IR code
 local function learnIRCode(lul_device)
     local ok, blId, veraFunc = validatePtrs(lul_device)   -- function is ctrlrRf(blId, 2)
@@ -1563,6 +1608,12 @@ end
 
 -- Map BroadLink hex ids to friendly labels
 local function setBlLabels()
+--[[
+   Possible other devices not yet described:
+   RM Pro:  433 only with temp sensor:        blDeviceType 9863dec = 2687h
+   RM Pro:  433 and 315 with no temp sensor:  blDeviceType 9885dec = 269dh
+]]
+
      blDevs = {
     [0x0000] = {desc = 'SP1'                   },
     [0x2711] = {desc = 'SP2'                   },
@@ -1776,7 +1827,7 @@ function pollBroadLinkDevices()
                 if (ok) then
                     updateVariable('CurrentTemperature', temperature + temperatureOffset, SID.TEMPERATURE_SENSOR, veraId)
                 else
-                    debug(v.veraDesc..': failed to get temperature. Is the device offline?')
+                    debug(v.veraDesc..': failed to get temperature. Is the device offline?',2)
                 end
 
             -- add in more sensors here with additional elseif
@@ -1826,7 +1877,7 @@ function luaStartUp(lul_device)
 
     -- Lua ver 5.1 does not have bit functions, whereas ver 5.2 and above do. Not
     -- that this matters in this code but it's nice to know if anything changes.
-    debug('Using: '.._VERSION)
+    debug('Using: '.._VERSION)   -- returns the string: 'Lua x.y'
 
     -- set up some defaults:
     updateVariable('PluginVersion', PLUGIN_VERSION)
@@ -1920,8 +1971,8 @@ function luaStartUp(lul_device)
     possible to have multiple instances of a given service, so each needs a unique serviceId.
 
     Also see:
-        http://forum.micasaverde.com/index.php/topic,34305.msg252587.html#msg252587
-        http://forum.micasaverde.com/index.php/topic,1503.msg5433.html#msg5433
+        https://community.getvera.com/t/plugin-and-childs/189244/6
+        https://community.getvera.com/t/variables-scope-and-visibility/164611/10
 ]]
     for k,v in pairs(veraDevices) do
         luup.chdev.append(

@@ -3,4 +3,4 @@
 Connect Vera to miscellaneous BroadLink devices.
 
 More information here:
-- http://forum.micasaverde.com/index.php/topic,53871.0.html
+- https://community.getvera.com/t/broadlink-mark-ii-plugin/198239
