@@ -21,6 +21,12 @@
 
         <action>
         <serviceId>urn:a-lurker-com:serviceId:IrTransmitter1</serviceId>
+        <name>SendEControlCode</name>
+        <run>sendEControlCode(lul_device, lul_settings.eControlCode)</run>
+        </action>
+
+        <action>
+        <serviceId>urn:a-lurker-com:serviceId:IrTransmitter1</serviceId>
         <name>SendProntoCode</name>
         <run>sendProntoCode(lul_device, lul_settings.ProntoCode)</run>
         </action>

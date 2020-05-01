@@ -7,33 +7,10 @@
 
     <serviceStateTable>
         <stateVariable sendEvents="no">
-        <name>A_ARG_TYPE_Var1</name>
-        <shortCode>Var1</shortCode>
-        <dataType>string</dataType>
-        </stateVariable>
-
-        <stateVariable sendEvents="no">
-        <name>A_ARG_TYPE_Var2</name>
-        <shortCode>Var2</shortCode>
-        <dataType>string</dataType>
         </stateVariable>
     </serviceStateTable>
 
     <actionList>
-       <action>
-            <!-- <name>Test</name>
-            <argumentList>
-                <argument>
-                    <name>Var1</name>
-                    <direction>in</direction>
-                    <relatedStateVariable>A_ARG_TYPE_Var1</relatedStateVariable>
-                </argument>
-                <argument>
-                    <name>Var2</name>
-                    <direction>in</direction>
-                    <relatedStateVariable>A_ARG_TYPE_Var2</relatedStateVariable>
-                </argument>
-            </argumentList> -->
-        </action>
+       <action></action>
     </actionList>
 </scpd>

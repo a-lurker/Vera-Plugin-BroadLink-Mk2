@@ -7,8 +7,8 @@
 
     <serviceStateTable>
         <stateVariable sendEvents="no">
-        <name>A_ARG_TYPE_Code</name>
-        <shortCode>Code</shortCode>
+        <name>A_ARG_TYPE_eControlCode</name>
+        <shortCode>eControlCode</shortCode>
         <dataType>string</dataType>
         </stateVariable>
 
@@ -17,16 +17,22 @@
         <shortCode>ProntoCode</shortCode>
         <dataType>string</dataType>
         </stateVariable>
+
+        <stateVariable sendEvents="no">
+        <name>A_ARG_TYPE_Code</name>
+        <shortCode>Code</shortCode>
+        <dataType>string</dataType>
+        </stateVariable>
     </serviceStateTable>
 
     <actionList>
          <action>
-            <name>SendCode</name>
+            <name>SendEControlCode</name>
             <argumentList>
                 <argument>
-                    <name>Code</name>
+                    <name>eControlCode</name>
                     <direction>in</direction>
-                    <relatedStateVariable>A_ARG_TYPE_Code</relatedStateVariable>
+                    <relatedStateVariable>A_ARG_TYPE_eControlCode</relatedStateVariable>
                 </argument>
             </argumentList>
         </action>
@@ -39,12 +45,22 @@
                     <relatedStateVariable>A_ARG_TYPE_ProntoCode</relatedStateVariable>
                 </argument>
             </argumentList>
-        </action>
+         </action>
+         <action>
+            <name>SendCode</name>
+            <argumentList>
+                <argument>
+                    <name>Code</name>
+                    <direction>in</direction>
+                    <relatedStateVariable>A_ARG_TYPE_Code</relatedStateVariable>
+                </argument>
+            </argumentList>
+         </action>
          <action>
             <name>LearnIRCode</name>
             <argumentList>
             </argumentList>
-        </action>
+         </action>
          <action>
             <name>LearnRFCode</name>
             <argumentList>
