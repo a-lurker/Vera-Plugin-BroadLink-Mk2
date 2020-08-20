@@ -1,5 +1,5 @@
 -- a-lurker, copyright 2017, 2018, 2019 & 2020
--- First release 10 December 2017; updated 1 May 2020
+-- First release 10 December 2017; updated 6 Aug 2020
 
 -- Tested on openLuup
 
@@ -32,7 +32,7 @@
     Any Vera, PC, etc, that connects to the AP, will be given an address of 192.168.10.2, which will
     increment, as further devices are connected to the AP.
 
-    We need to send a pairing message to the AP on 92.168.10.1 In this pairing message, we
+    We need to send a pairing message to the AP on 192.168.10.1 In this pairing message, we
     send the WiFi SSID and password of the AP that is part of our Vera network. Once successfully
     received, the BroadLink device with disable its own AP and DCHP server and connect to the AP
     specified in our message ie the LAN connected to Vera. The blue LED goes completely off.
@@ -52,7 +52,7 @@
 
 local PLUGIN_NAME      = 'BroadLink_Mk2'
 local PLUGIN_SID       = 'urn:a-lurker-com:serviceId:'..PLUGIN_NAME..'_1'
-local PLUGIN_VERSION   = '0.55'
+local PLUGIN_VERSION   = '0.56'
 local THIS_LUL_DEVICE  = nil
 
 -- your WiFi SSID and PASS. Only required if not using the phone
@@ -102,6 +102,7 @@ local BROADLINK_AP_IP  = '192.168.10.1'
 local UDP_IP_PORT      = 80
 local OUR_IP           = ''
 local MSG_TIMEOUT      = 1
+local SCAN_PERIOD      = MSG_TIMEOUT + 1   -- in seconds: don't make this any lower
 
 local CHECKSUM_SEED    = 0xbeaf
 local FIVE_MIN_IN_SECS = 300
@@ -115,14 +116,15 @@ local m_IRScanCount    = 0
 local m_RFScanCount    = 0
 
 local RF = {
-    START    = 1,
-    GET_FREQ = 2,
-    GET_CODE = 3,
-    DONE     = 4,
-    ABORT_1  = 5,
-    ABORT_2  = 6
+    START_GET_FREQ = 1,
+    SCAN_FOR_FREQ  = 2,
+    START_GET_CODE = 3,
+    SCAN_FOR_CODE  = 4,
+    DONE           = 5,
+    ABORT_1        = 6,
+    ABORT_2        = 7
 }
-local m_RfScanningState = RF.START
+local m_RfScanningState = RF.START_GET_FREQ
 
 -- AES-128 CBC algorithm with no padding
 local initialKey    = '097628343fe99e23765c1513accf8b02' -- 0x09, 0x76, 0x28, 0x34, 0x3f, 0xe9, 0x9e, 0x23, 0x76, 0x5c, 0x15, 0x13, 0xac, 0xcf, 0x8b, 0x02
@@ -156,23 +158,24 @@ local blCmds = {
 
 -- payload commands are placed at the 1st byte (0x00) of the payload (well - seem to be)
 local plCmds = {
-    off          = 0x00,   -- cmd = 0x6a, 4 byte payload
-    on           = 0x01,   -- cmd = 0x6a, 4 byte payload
+    off            = 0x00,   -- cmd = 0x6a, 4 byte payload
+    on             = 0x01,   -- cmd = 0x6a, 4 byte payload
 
-    get          = 0x01,   -- cmd = 0x6a, 16 byte payload
-    set          = 0x02,   -- cmd = 0x6a, 4 byte + payload size ie off, on, ir/rf data: location 0x05 = 0x26 for ir data, else rf data
-    irLearnStart = 0x03,   -- cmd = 0x6a, 16 byte payload
-    irGetCode    = 0x04,   -- cmd = 0x6a, 16 byte payload
-    sensorsGet   = 0x06,   -- cmd = 0x6a, 16 byte payload
-    sensorsSet   = 0x07,   -- cmd = 0x6a, 16 byte payload
-    energyGet    = 0x08,   -- cmd = 0x6a, 16 byte payload
-    dooya        = 0x09,   -- cmd = 0x6a, 16 byte payload
-    mp1RlyStatus = 0x0a,   -- cmd = 0x6a, 16 byte payload
-    mp1RlySw     = 0x0d,   -- cmd = 0x6a, 16 byte payload
-    rfLearnStart = 0x19,   -- cmd = 0x6a, 16 byte payload
-    rfLearnFreq  = 0x1a,   -- cmd = 0x6a, 16 byte payload
-    rfLearnCode  = 0x1b,   -- cmd = 0x6a, 16 byte payload
-    rfLearnStop  = 0x1e    -- cmd = 0x6a, 16 byte payload
+    get            = 0x01,   -- cmd = 0x6a, 16 byte payload
+    set            = 0x02,   -- cmd = 0x6a, 4 byte + payload size ie off, on, ir/rf data: location 0x05 = 0x26 for ir data, else rf data
+    irLearnStart   = 0x03,   -- cmd = 0x6a, 16 byte payload
+    irGetCode      = 0x04,   -- cmd = 0x6a, 16 byte payload   NOTE: same as 'rfScanForCode'
+    sensorsGet     = 0x06,   -- cmd = 0x6a, 16 byte payload
+    sensorsSet     = 0x07,   -- cmd = 0x6a, 16 byte payload
+    energyGet      = 0x08,   -- cmd = 0x6a, 16 byte payload
+    dooya          = 0x09,   -- cmd = 0x6a, 16 byte payload
+    mp1RlyStatus   = 0x0a,   -- cmd = 0x6a, 16 byte payload
+    mp1RlySw       = 0x0d,   -- cmd = 0x6a, 16 byte payload
+    rfStartGetFreq = 0x19,   -- cmd = 0x6a, 16 byte payload
+    rfScanForFreq  = 0x1a,   -- cmd = 0x6a, 16 byte payload
+    rfStartGetCode = 0x1b,   -- cmd = 0x6a, 16 byte payload
+    rfScanForCode  = 0x04,   -- cmd = 0x6a, 16 byte payload   NOTE: same as 'irGetCode'
+    rfLearnStop    = 0x1e    -- cmd = 0x6a, 16 byte payload
 }
 
 -- returned data typically starts at the 5th byte (0x04+1) of the payload
@@ -268,13 +271,16 @@ local function updateVariable(varK, varV, sid, id)
     if (sid == nil) then sid = PLUGIN_SID      end
     if (id  == nil) then  id = THIS_LUL_DEVICE end
 
-    if ((varK == nil) or (varV == nil)) then
-        luup.log(PLUGIN_NAME..' debug: '..'Error: updateVariable was supplied with a nil value', 1)
+    if (varV == nil) then
+        if (varK == nil) then
+            luup.log(PLUGIN_NAME..' debug: '..'Error: updateVariable was supplied with nil values', 1)
+        else
+            luup.log(PLUGIN_NAME..' debug: '..'Error: updateVariable '..tostring(varK)..' was supplied with a nil value', 1)
+        end
         return
     end
 
     local newValue = tostring(varV)
-    --debug(varK..' = '..newValue)
     debug(newValue..' --> '..varK)
 
     local currentValue = luup.variable_get(sid, varK, id)
@@ -293,7 +299,9 @@ local function loadJsonModule()
         'json-dm2',             -- dataMine plugin
         'dropbox_json_parser',  -- dropbox plugin
         'hue_json',             -- hue plugin
-        'L_ALTUIjson'           -- AltUI plugin
+        'L_ALTUIjson',          -- AltUI plugin
+        'cjson',                -- openLuup?
+        'rapidjson'             -- how many json libs are there?
     }
 
     local ptr  = nil
@@ -512,7 +520,7 @@ local function encryptDecrypt(key, input, encrypt)
     local inOut = '-d'
     if (encrypt) then inOut = '-e' end
 
-    -- https://www.openssl.org/docs/manmaster/man1/enc.html
+    -- https://wiki.openssl.org/index.php/Enc
     local encDecCmdTab = {
     'openssl',
     'enc',                    -- use a symmetric cipher
@@ -689,7 +697,7 @@ local function addToBroadlinkPhysicalDevicesList(rxMsg, ip)
     local blDeviceType = rxMsgTab[0x35+1]*256 + rxMsgTab[0x34+1]
 
     if (not blDevs[blDeviceType]) then
-        debug(string.format('The BroadLink device at IP address %s and of type 0x%04x is not known to this plugin', ip, blDeviceType))
+        debug(string.format('The BroadLink device at IP address %s and of type 0x%04x is not known to this plugin', ip, blDeviceType),50)
         return
     end
 
@@ -801,6 +809,7 @@ end
 -- AP function and changes to a slave, connected to our LAN.
 -- That's assuming the correct SSID and PASS were made use of.
 -- The tx'ed msg carrys no payload
+-- https://github.com/mjg59/python-broadlink/blob/daebd806fd8529b9c29b4d70f82a036f30ea5847/broadlink/__init__.py#L1077
 local function makePairingMsg()
     local securityType = 0x03   -- WPA2
     local ssidLen      = string.len(SSID)
@@ -1211,6 +1220,8 @@ local function broadcastDiscoverDevicesMsg()
             addToBroadlinkPhysicalDevicesList(rxMsg, ipOrErrorMsg)
         end
     until (not rxMsg)
+    
+    debug('Number of BroadLink devices found is '..tostring(#blDevices),50)
 
     udp:close()
 
@@ -1322,15 +1333,16 @@ function scanningForBroadlinkIrCode(blId)
     m_IRScanCount = m_IRScanCount -1
 
     -- No msg rx'ed. Scanning failed to get a learnt code.
-    if (m_IRScanCount == 0) then m_PollEnable = m_PollLastState return end
+    if (m_IRScanCount <= 0) then m_PollEnable = m_PollLastState return end
 
     -- send the "have we got a learnt code" command
     local ok, payloadTab = sendReceive('Scanning for learnt code', makeSimpleMsg(blId, 0x10, plCmds.irGetCode), blId)
 
     -- Keep scanning if no message is Rx'ed or the returned errorMsg ~= '0000'. Note that the returned errorMsg
-    -- can be 'fff6', which appears to indicate that no IR code has been found so far: Refer to sendreceive()
+    -- can be '0xfff6', which appears to indicate that no IR code has been found so far: Refer to sendreceive()
     if (not ok) then
-        luup.call_delay('scanningForBroadlinkIrCode', MSG_TIMEOUT +3, blId)
+        -- check for a learnt IR code every 2 seconds for 2*12=24 seconds
+        luup.call_delay('scanningForBroadlinkIrCode', SCAN_PERIOD, blId)
         return
     end
 
@@ -1359,34 +1371,38 @@ local function lookForLearntIrCode(blId)
     local ok, payloadTab = sendReceive('Start IR learn', makeSimpleMsg(blId, 0x10, plCmds.irLearnStart), blId)
     if (not ok) then m_PollEnable = m_PollLastState return end
 
-    -- note: the Broadlink RM PRO & RM Mini 3 automatically stop the IR learning mode after 30 seconds
-    -- check for a learnt IR code every 4 seconds for 28 seconds
-    -- we can't scan any faster than the rx msg timeout
-    m_IRScanCount = 7
-    luup.call_delay('scanningForBroadlinkIrCode', MSG_TIMEOUT +3, blId)
+    -- Note: the Broadlink RM PRO & RM Mini 3 automatically stop the IR learning mode after 30 seconds
+    -- Check for a learnt IR code every 2 seconds for 2*12=24 seconds
+    -- We can't scan any faster than the rx msg timeout - scan every 2 seconds
+    m_IRScanCount = 12
+    luup.call_delay('scanningForBroadlinkIrCode', SCAN_PERIOD, blId)
 end
 
 -- Start the scan for a learnt RF code. Function must be global.
 function lookForLearntBroadlinkRfCode(blId)
-    if (m_RfScanningState == RF.START) then
+    if (m_RfScanningState == RF.START_GET_FREQ) then
         -- Disable polling. Note this effects all Broadlink devices in use.
         m_PollLastState = m_PollEnable
         m_PollEnable = '0'
 
+        -- initial situation
         updateVariable('LearntRFCode', 'No RF code was learnt')
 
-        -- Enter learning mode. The reply payload is just the TX'ed command echoed back, plus 15 0x00s to make up 16 bytes for AES.
+        -- Enter RF frequency learning mode. The reply payload is just the TX'ed command echoed back, plus 15 0x00s to make up 16 bytes for AES.
         -- That is: 0x19 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
-        local ok, payloadTab = sendReceive('Start RF Remote learn', makeSimpleMsg(blId, 0x10, plCmds.rfLearnStart), blId)
+        debug('Starting learning process',50)
+        local ok, payloadTab = sendReceive('Start frequency learn', makeSimpleMsg(blId, 0x10, plCmds.rfStartGetFreq), blId)
 
         if (ok) then
-            -- check for a learnt RF frequency every 4 seconds for 4*8=32 seconds
-            m_RFScanCount = 8
-            m_RfScanningState = RF.GET_FREQ
+            debug('Frequency learning has started: tap the button on the remote every second or so...',50)
+            -- check for a learnt RF frequency every 2 seconds for 2*12=24 seconds
+            m_RFScanCount = 12
+            m_RfScanningState = RF.SCAN_FOR_FREQ
         else
             m_RfScanningState = RF.ABORT_1
         end
-    elseif (m_RfScanningState == RF.GET_FREQ) then
+
+    elseif (m_RfScanningState == RF.SCAN_FOR_FREQ) then
         m_RFScanCount = m_RFScanCount-1
 
         -- Enter step 1 of RF learning. This checks the RF frequency. The reply is the TX'ed command
@@ -1394,61 +1410,72 @@ function lookForLearntBroadlinkRfCode(blId)
         -- Not found: 0x1A 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
         -- Found:     0x1A 0x00 0x00 0x00 0x01 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
         -- Given up:  0x1A 0x00 0x00 0x00 0x04 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
-        local ok, payloadTab = sendReceive('Scanning for the Remote\'s frequency', makeSimpleMsg(blId, 0x10, plCmds.rfLearnFreq), blId)
+        debug('Scanning for frequency',50)
+        local ok, payloadTab = sendReceive('Scanning for the remote\'s frequency', makeSimpleMsg(blId, 0x10, plCmds.rfScanForFreq), blId)
 
         if (ok and payloadTab and (payloadTab[plData.rfFoundFlag] == 0x01)) then
-            debug('Remote frequency found')
-            -- check for a learnt RF code every 4 seconds for 4*8=32 seconds
-            m_RFScanCount = 8
-            m_RfScanningState = RF.GET_CODE
+            debug('The remote\'s frequency has been found!',50)
+            m_RfScanningState = RF.START_GET_CODE
         elseif (ok and payloadTab and (payloadTab[plData.rfFoundFlag] == 0x04)) then
-            debug('Given up on finding Remote frequency')
+            debug('Have given up on finding the remote\'s frequency - aborting',50)
             m_RfScanningState = RF.ABORT_2
         elseif (m_RFScanCount <= 0) then
-            debug('Comms error finding Remote frequency')
+            debug('Comms error finding the remote\'s frequency',50)
             m_RfScanningState = RF.ABORT_2
         end
         -- keep scanning if no message is Rx'ed
-    elseif (m_RfScanningState == RF.GET_CODE) then
-        m_RFScanCount = m_RFScanCount-1
 
-        -- Enter step 2 of RF learning. This checks for the RF code. The reply is the TX'ed command
-        -- echoed back, a found flag and 0x00s to make up 16 bytes for AES. Flag is at 0x04+1
-        -- Not found: 0x1B 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
-        -- Found:     0x1B 0x00 0x00 0x00 0x01 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
-        local ok, payloadTab = sendReceive('Scanning for the Remote\'s code', makeSimpleMsg(blId, 0x10, plCmds.rfLearnCode), blId)
-
-        if (ok and payloadTab and (payloadTab[plData.rfFoundFlag] == 0x01)) then
-            debug('Remote code found')
-            m_RfScanningState = RF.DONE
-        elseif (m_RFScanCount <= 0) then
-            m_RfScanningState = RF.ABORT_2
-        end
-    elseif (m_RfScanningState == RF.DONE) then
-        -- Scan comnplete. Stop the scanning and get the learnt code.
-        -- send the "have we got a learnt code" command
-        local ok, payloadTab = sendReceive('Retrieving learnt frequency and code', makeSimpleMsg(blId, 0x10, plCmds.irGetCode), blId)
+    elseif (m_RfScanningState == RF.START_GET_CODE) then
+        -- Enter RF code learning mode.  The reply payload is just the TX'ed command echoed back,
+        -- plus a Flag is at 0x04+1, plus 15 0x00s to make up 16 bytes for AES.
+        -- That is: 0x1B 0x00 0x00 0x00 0x01 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+        debug('Code learning has started: keep tapping the button on the remote every second or so...',50)
+        local ok, payloadTab = sendReceive('Start code learn', makeSimpleMsg(blId, 0x10, plCmds.rfStartGetCode), blId)
 
         if (ok) then
+            -- check for a learnt RF code every 2 seconds for 2*12=24 seconds
+            m_RFScanCount = 12
+            m_RfScanningState = RF.SCAN_FOR_CODE
+        else
+            m_RfScanningState = RF.ABORT_2
+        end
+
+    elseif (m_RfScanningState == RF.SCAN_FOR_CODE) then
+        m_RFScanCount = m_RFScanCount-1
+
+        -- Enter step 2 of RF learning. This checks for the RF code.
+        -- The reply is either the error code 0xfff6 with no payload or the detected RF code.
+        debug('Scanning for code',50)
+        local ok, payloadTab = sendReceive('Scanning for the remote\'s code', makeSimpleMsg(blId, 0x10, plCmds.rfScanForCode), blId)
+
+        if (ok and payloadTab) then
+            debug('A remote code found! But will it work?',50)
+
             -- Got a learnt code. Extract the code from the payload.
             local codeTab = {}
             for n = plData.rfCodeIdx0, #payloadTab do table.insert(codeTab, string.format('%02x', payloadTab[n])) end
 
             updateVariable('LearntRFCode', table.concat(codeTab, ' '))
 
-            m_PollEnable = m_PollLastState
-
-            local ok, payloadTab = sendReceive('Stop RF learn', makeSimpleMsg(blId, 0x10, plCmds.rfLearnStop), blId)
-            return   -- success!!
-        else
-            m_RfScanningState = RF.ABORT_1
+            m_RfScanningState = RF.DONE
+        elseif (m_RFScanCount <= 0) then
+            m_RfScanningState = RF.ABORT_2
         end
+
+    elseif (m_RfScanningState == RF.DONE) then
+        -- Scan complete. Stop the scanning. The reply payload is just the TX'ed command echoed back, plus 15 0x00s to make up 16 bytes for AES.
+        -- That is: 0x1E 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+        debug('Code learning has sucessfully finished',50)
+        local ok, payloadTab = sendReceive('Stop RF learn', makeSimpleMsg(blId, 0x10, plCmds.rfLearnStop), blId)
+        m_PollEnable = m_PollLastState
+        return   -- success!!
+
     else
-        debug('Error: unknown state - aborting')
+        debug('Error: unknown state - aborting',50)
         m_RfScanningState = RF.ABORT_1
     end
 
-    -- did we fail to start or stop the scan?
+    -- did we fail to start the scan?
     if (m_RfScanningState == RF.ABORT_1) then
         debug('Error: comms error - aborting')
         m_PollEnable = m_PollLastState
@@ -1464,9 +1491,10 @@ function lookForLearntBroadlinkRfCode(blId)
         return
     end
 
-    -- This is a four second delay.
-    -- We can't scan any faster than the rx msg timeout
-    luup.call_delay('lookForLearntBroadlinkRfCode', MSG_TIMEOUT +3, blId)
+    -- Note: the Broadlink RM PRO automatically stop the RF learning mode after about 23 seconds
+    -- Check for a learnt IR code every 2 seconds for 2*12=24 seconds
+    -- We can't scan any faster than the rx msg timeout - scan every 2 seconds
+    luup.call_delay('lookForLearntBroadlinkRfCode', SCAN_PERIOD, blId)
 end
 
 -- Send IR & RF messages or learn IR or RF codes
@@ -1477,7 +1505,7 @@ local function ctrlrRf(blId, func, dataTab)
         local ok, payloadTab = sendReceive('Tx IR RF', makeTxIrRfMsg(blId, dataTab), blId)
     elseif (func == 2) then lookForLearntIrCode(blId)
     elseif (func == 3) then
-        m_RfScanningState = RF.START
+        m_RfScanningState = RF.START_GET_FREQ
         lookForLearntBroadlinkRfCode(blId)
     else debug('Invalid function number') end
 end
@@ -1636,6 +1664,7 @@ local function learnRFCode(lul_device)
 end
 
 -- Map BroadLink hex ids to friendly labels
+-- https://github.com/mjg59/python-broadlink/blob/daebd806fd8529b9c29b4d70f82a036f30ea5847/broadlink/__init__.py#L18
 local function setBlLabels()
 --[[
    Possible other devices not yet described:
@@ -1694,6 +1723,7 @@ end
 
 -- Map BroadLink functionality to the functions that will do the actual work. Stick
 -- all this stuff here, so we don't end up with forward references to the called functions
+-- https://github.com/mjg59/python-broadlink/blob/daebd806fd8529b9c29b4d70f82a036f30ea5847/broadlink/__init__.py#L18
 local function setDeviceConfiguration()
     setBlLabels()
     -- add in the empty devs arrays, then fill them in
@@ -1964,17 +1994,18 @@ function luaStartUp(lul_device)
 
     -- set up some defaults:
     local debugEnabled = luup.variable_get(PLUGIN_SID, 'DebugEnabled', THIS_LUL_DEVICE)
-    if ((debugEnabled == nil) or (debugEnabled == '')) then
+    if not((debugEnabled == '0') or (debugEnabled == '1')) then
         debugEnabled = '0'
         updateVariable('DebugEnabled', debugEnabled)
     end
     DEBUG_MODE = (debugEnabled == '1')
 
     local pluginEnabled = luup.variable_get(PLUGIN_SID, 'PluginEnabled', THIS_LUL_DEVICE)
-    if ((pluginEnabled == nil) or (pluginEnabled == '')) then
+    if not((pluginEnabled == '0') or (pluginEnabled == '1')) then
         pluginEnabled = '1'
         updateVariable('PluginEnabled', pluginEnabled)
     end
+    if (pluginEnabled ~= '1') then return true, 'All OK', PLUGIN_NAME end
 
     m_json = loadJsonModule()
     if (not m_json) then return false, 'No JSON module found', PLUGIN_NAME end
@@ -1986,7 +2017,7 @@ function luaStartUp(lul_device)
     end
 
     local pollEnable = luup.variable_get(PLUGIN_SID, 'PollEnable', THIS_LUL_DEVICE)
-    if ((pollEnable == nil) or (pollEnable == '')) then
+    if not((pollEnable == '0') or (pollEnable == '1')) then
         -- turn the polling on
         m_PollEnable = '1'
         polling(m_PollEnable)
@@ -1995,6 +2026,7 @@ function luaStartUp(lul_device)
     end
 
     -- don't allow polling any faster than five minutes
+    local pollInterval = luup.variable_get(PLUGIN_SID, 'PollInterval', THIS_LUL_DEVICE)
     local theInterval = tonumber(pollInterval)
     if ((theInterval == nil) or (theInterval < FIVE_MIN_IN_SECS)) then
         m_PollInterval = FIVE_MIN_IN_SECS
