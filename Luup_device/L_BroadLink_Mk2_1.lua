@@ -1682,9 +1682,11 @@ local function setBlLabels()
     -- compliments of bblacey - thank you: devices with new leadin arrangements:
     [0x51da] = {desc = 'RM4 Mini'              },
     [0x5f36] = {desc = 'RM3 Mini'              },
+    [0x6026] = {desc = 'RM4 Pro'               },
     [0x6070] = {desc = 'RM4 Mini'              },
     [0x610e] = {desc = 'RM4 Mini'              },
     [0x610f] = {desc = 'RM4 Mini'              },
+    [0x61a2] = {desc = 'RM4 Pro'               },
     [0x62bc] = {desc = 'RM4 Mini'              },
     [0x62be] = {desc = 'RM4 Mini'              }
     }
@@ -1780,12 +1782,16 @@ local function setDeviceConfiguration()
     blDevs[0x51da].plHdrs  = {0x0004, 0x000d}                  --
     blDevs[0x5f36].devs.ir = ctrlrRf                           -- 'RM3  Mini'
     blDevs[0x5f36].plHdrs  = {0x0004, 0x000d}                  --
-    blDevs[0x6070].devs.ir = ctrlrRf                           -- 'RM4c Mini'
+    blDevs[0x6026].devs.ir = ctrlrRf                           -- 'RM4 Pro'
+    blDevs[0x6026].plHdrs  = {0x0004, 0x000d}                  --
+    blDevs[0x6070].devs.ir = ctrlrRf                           -- 'RM4 Pro'
     blDevs[0x6070].plHdrs  = {0x0004, 0x000d}                  --
     blDevs[0x610e].devs.ir = ctrlrRf                           -- 'RM4? Mini'
     blDevs[0x610e].plHdrs  = {0x0004, 0x000d}                  --
     blDevs[0x610f].devs.ir = ctrlrRf                           -- 'RM4c Mini'
     blDevs[0x610f].plHdrs  = {0x0004, 0x000d}                  --
+    blDevs[0x61a2].devs.ir = ctrlrRf                           -- 'RM4 Pro'
+    blDevs[0x61a2].plHdrs  = {0x0004, 0x000d}                  --
     blDevs[0x62bc].devs.ir = ctrlrRf                           -- 'RM4c Mini'
     blDevs[0x62bc].plHdrs  = {0x0004, 0x000d}                  --
     blDevs[0x62be].devs.ir = ctrlrRf                           -- 'RM4c Mini'
