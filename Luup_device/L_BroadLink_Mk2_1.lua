@@ -1,5 +1,5 @@
--- a-lurker, copyright 2017, 2018, 2019 & 2020
--- First release 10 December 2017; updated 6 Aug 2020
+-- a-lurker, copyright 2017, 2018, 2019, 2020 and 2021
+-- First release 10 December 2017; updated  April 2021
 
 -- Tested on openLuup
 
@@ -52,7 +52,7 @@
 
 local PLUGIN_NAME      = 'BroadLink_Mk2'
 local PLUGIN_SID       = 'urn:a-lurker-com:serviceId:'..PLUGIN_NAME..'_1'
-local PLUGIN_VERSION   = '0.56'
+local PLUGIN_VERSION   = '0.57'
 local THIS_LUL_DEVICE  = nil
 
 -- your WiFi SSID and PASS. Only required if not using the phone
@@ -292,6 +292,8 @@ end
 -- If possible, get a JSON parser. If none available, returns nil. Note that typically UI5 may not have a parser available.
 local function loadJsonModule()
     local jsonModules = {
+        'rapidjson',            -- how many json libs are there?
+        'cjson',                -- openLuup?
         'dkjson',               -- UI7 firmware
         'openLuup.json',        -- https://community.getvera.com/t/pure-lua-json-library-akb-json/185273
         'akb-json',             -- https://community.getvera.com/t/pure-lua-json-library-akb-json/185273
@@ -299,9 +301,7 @@ local function loadJsonModule()
         'json-dm2',             -- dataMine plugin
         'dropbox_json_parser',  -- dropbox plugin
         'hue_json',             -- hue plugin
-        'L_ALTUIjson',          -- AltUI plugin
-        'cjson',                -- openLuup?
-        'rapidjson'             -- how many json libs are there?
+        'L_ALTUIjson'           -- AltUI plugin
     }
 
     local ptr  = nil
@@ -363,6 +363,29 @@ local function tableDump(userMsg, byteTab)
     end
 
     debug(table.concat(dmpTab))
+end
+
+-- https://gist.github.com/bortels/1436940
+-- Lua 5.1+ base64 v3.0 (c) 2009 by Alex Kloss <alexthkloss@web.de>
+-- licensed under the terms of the LGPL2
+-- base64 decoding. We could use this function found in the mime library: mime.unb64(data) but we won't.
+local function base64dec(data)
+    -- character table string
+    local b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+    data = string.gsub(data, '[^'..b..'=]', '')
+    return (data:gsub('.', function(x)
+        if (x == '=') then return '' end
+        local r,f='',(b:find(x)-1)
+        for i=6,1,-1 do r=r..(f%2^i-f%2^(i-1)>0 and '1' or '0') end
+        return r;
+    end):gsub('%d%d%d?%d?%d?%d?%d?%d?', function(x)
+        if (#x ~= 8) then return '' end
+        local c=0
+        for i=1,8 do c=c+(x:sub(i,i)=='1' and 2^(8-i) or 0) end
+        --return string.char(c)   --  as binary
+        return string.format('%02x',c)   -- as hex string
+    end))
 end
 
 -- Compute the difference in seconds between local time and UTC including daylight saving
@@ -610,7 +633,6 @@ local function prontoCode2blCode(pCode)
     local pcFreqHz     = PRONTO_PWM_HZ / pCodeTab[ir.freqDiv]
     local blFreqHz     = 32836.9140625   -- =(269/8192)*1e6   and (268/8192)*1e6=32714.84375
     local freqRatio    = blFreqHz/pcFreqHz
-    local burstPairCnt = pCodeTab[ir.repeatSeqCnt]
 
     local irCodeTab = {
         0x26,   -- IR code flag, not 315/433 MHz RF
@@ -660,8 +682,8 @@ end
 -- Add each physical BroadLink device to the list of BroadLink devices
 local function addToBroadlinkPhysicalDevicesList(rxMsg, ip)
 --[[
-    The response contains the 48 bytes we sent above, with updated checksum,
-    plus another 80 bytes of info, making a total of 128 bytes.
+    The response contains the 48 bytes we sent with makeDiscoverDevicesMsg() with an
+    updated checksum, plus another 80 bytes of info, making a total of 128 bytes.
 
     0x26+1 = 0x7 reply to "discoverDevices" request blCmds.discoverDevices.rx
     0x35+1 to 0x34+1 = device type eg as 2 bytes indicating "RM2 Pro Plus 2" etc. This determines capabilities.
@@ -684,6 +706,12 @@ local function addToBroadlinkPhysicalDevicesList(rxMsg, ip)
     if (rxMsgLen ~= 128) then debug('Error: discovery msg - incorrect size: '..ip,50) return end
     if (rxMsgTab[0x26+1] ~= blCmds.discoverDevices.rx) then debug('Error: discovery msg - reply id incorrect',50) return end
 
+    if (rxMsgTab[128] == 0x00) then
+        debug('Looks like the Cloud bit is not set - that\'s good',50)
+    else
+        debug('Looks like the Cloud bit is set - that\'s not good',50)
+    end
+
     -- get the mac address contained in the returned message
     local strTab = {}
     for i = 0x3f+1, 0x3a+1, -1 do table.insert(strTab, string.format('%02x',rxMsgTab[i])) end
@@ -692,6 +720,15 @@ local function addToBroadlinkPhysicalDevicesList(rxMsg, ip)
     -- indices are case sensitive, so force to lower just in case
     local mac = string.lower(table.concat(strTab,':'))
     local blId = mac
+
+    -- get the device's friendly text name
+    strTab = {}
+    local i = 0x40+1
+    while ((rxMsgTab[i] ~= 0x00) and (i ~= 127)) do
+       table.insert(strTab, string.format('%02x',rxMsgTab[i]))
+       i = i+1
+    end
+    debug('Friendly name: '..table.concat(strTab,''))
 
     -- get the hex number that represents this particular BroadLink device
     local blDeviceType = rxMsgTab[0x35+1]*256 + rxMsgTab[0x34+1]
@@ -1221,7 +1258,12 @@ local function broadcastDiscoverDevicesMsg()
         end
     until (not rxMsg)
     
-    debug('Number of BroadLink devices found is '..tostring(#blDevices),50)
+    local devCnt = 0
+    for k,v in pairs(blDevices) do
+        devCnt = devCnt+1
+    end
+
+    debug('Number of BroadLink devices found is '..tostring(devCnt),50)
 
     udp:close()
 
@@ -1575,6 +1617,15 @@ local function sendCode(lul_device, irRfCode)
     local ok, blId, veraFunc = validatePtrs(lul_device)   -- function is ctrlrRf(blId, 1, irCodeTab)
     if (not ok) then return end
 
+    -- check for a base64 code
+    local b64CodeTst = irRfCode:sub(1,1)
+    -- test is case sensitive
+    -- 26h --> 'J',   d7h --> '1',   b2h --> 's'
+    if ((b64CodeTst == 'J') or (b64CodeTst == '1') or (b64CodeTst == 's')) then
+       if (irRfCode:len() % 4 ~= 0) then debug('The base64 string length is not a multiple of four ',50) return end
+       irRfCode = base64dec(irRfCode)
+    end
+
     local irRfCode  = irRfCode:lower()
     local pCodeTst  = irRfCode:sub(1,4)
     local blCodeTst = irRfCode:sub(1,2)
@@ -1594,7 +1645,7 @@ local function sendCode(lul_device, irRfCode)
             if (n == nil) then debug('Invalid IR code - not all hexadecimal',50) return end
             table.insert(irCodeTab, n)
         end
-    else debug('Invalid IR code',50) return end
+    else debug('Invalid IR/RF code',50) return end
 
     -- for debugging purposes only
     if (DEBUG_MODE) then
@@ -1717,7 +1768,11 @@ local function setBlLabels()
     [0x610f] = {desc = 'RM4 Mini'              },
     [0x61a2] = {desc = 'RM4 Pro'               },
     [0x62bc] = {desc = 'RM4 Mini'              },
-    [0x62be] = {desc = 'RM4 Mini'              }
+    [0x62be] = {desc = 'RM4 Mini'              },
+
+    -- April 2021
+    [0x649b] = {desc = 'RM4 Pro'               },
+    [0x653c] = {desc = 'RM4 Pro'               }
     }
 end
 
@@ -1827,6 +1882,11 @@ local function setDeviceConfiguration()
     blDevs[0x62be].devs.ir = ctrlrRf                           -- 'RM4c Mini'
     blDevs[0x62be].plHdrs  = {0x0004, 0x000d}                  --
 
+    -- April 2021
+    blDevs[0x649b].devs.ir = ctrlrRf                           -- 'RM4 Pro'
+    blDevs[0x649b].plHdrs  = {0x0004, 0x000d}                  --
+    blDevs[0x653c].devs.ir = ctrlrRf                           -- 'RM4 Pro'
+    blDevs[0x653c].plHdrs  = {0x0004, 0x000d}                  --
 --[[
     Other BroadLink devices:
     'TC2' Touch Control: 1 to 3 gang switches; is a slave device and is typically controlled by a 'RM Pro +' using 433 MHz
