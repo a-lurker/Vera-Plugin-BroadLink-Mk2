@@ -52,7 +52,7 @@
 
 local PLUGIN_NAME      = 'BroadLink_Mk2'
 local PLUGIN_SID       = 'urn:a-lurker-com:serviceId:'..PLUGIN_NAME..'_1'
-local PLUGIN_VERSION   = '0.57'
+local PLUGIN_VERSION   = '0.57a'
 local THIS_LUL_DEVICE  = nil
 
 -- your WiFi SSID and PASS. Only required if not using the phone
@@ -1883,10 +1883,18 @@ local function setDeviceConfiguration()
     blDevs[0x62be].plHdrs  = {0x0004, 0x000d}                  --
 
     -- April 2021
-    blDevs[0x649b].devs.ir = ctrlrRf                           -- 'RM4 Pro'
+    ptr = blDevs[0x649b].devs                                  -- 'RM4 Pro'
+        ptr.ir    = ctrlrRf                                    --
+        ptr.rf315 = ctrlrRf                                    --
+        ptr.rf433 = ctrlrRf                                    --
     blDevs[0x649b].plHdrs  = {0x0004, 0x000d}                  --
-    blDevs[0x653c].devs.ir = ctrlrRf                           -- 'RM4 Pro'
+
+    ptr = blDevs[0x653c].devs                                  -- 'RM4 Pro'
+        ptr.ir    = ctrlrRf                                    --
+        ptr.rf315 = ctrlrRf                                    --
+        ptr.rf433 = ctrlrRf                                    --
     blDevs[0x653c].plHdrs  = {0x0004, 0x000d}                  --
+
 --[[
     Other BroadLink devices:
     'TC2' Touch Control: 1 to 3 gang switches; is a slave device and is typically controlled by a 'RM Pro +' using 433 MHz
