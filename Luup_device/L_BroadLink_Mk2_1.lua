@@ -1,5 +1,5 @@
--- a-lurker, copyright 2017, 2018, 2019, 2020 and 2021
--- First release 10 December 2017; updated  April 2021
+-- a-lurker, copyright 2017 to 2024 and beyond!
+-- First release 10 December 2017; updated April 2024
 
 -- Tested on openLuup
 
@@ -20,24 +20,22 @@
     GNU General Public License for more details.
 ]]
 --[[
-    Typically the BroadLink device is already paired with the phone app. The following is just
-    further information on pairing in general.
-
-    On purchase the BroadLink device is in a mode where it can be configured via a mobile phone.
-    We need to change the mode to AP mode. Place the BroadLink device into AP mode by holding
-    down the reset button about four seconds. A successful change to AP mode is indicated by the
-    blue LED: four slow flashes followed by a one second pause.
+    The BroadLink device may have been already configured via a mobile phone. We need
+    to change the mode back to AP mode. Place the BroadLink device into AP mode by holding
+    down the reset button about four seconds. A successful change to AP mode is indicated by
+    the blue LED: four flashes followed by a one second pause.
 
     At this point the device acts as WiFi access point (AP). It runs a DCHP server on 192.168.10.1
     Any Vera, PC, etc, that connects to the AP, will be given an address of 192.168.10.2, which will
     increment, as further devices are connected to the AP.
 
-    We need to send a pairing message to the AP on 192.168.10.1 In this pairing message, we
-    send the WiFi SSID and password of the AP that is part of our Vera network. Once successfully
+    We need to send a pairing message to the AP on 192.168.10.1 In this pairing message, we send
+    the WiFi SSID and password of the AP that is part of our Vera/openLuup network. Once successfully
     received, the BroadLink device with disable its own AP and DCHP server and connect to the AP
-    specified in our message ie the LAN connected to Vera. The blue LED goes completely off.
+    specified in our message ie the LAN connected to Vera/openLuup. The blue LED goes completely off.
     The BroadLink device effectively stops acting as an AP and changes to being a slave device.
     At this point we can start to use the facilities the BroadLink device offers.
+
     Refer to: sendPairingMsg(), which works but is not called by this code.
 
     Devices use broadcast and multicast on 224.0.0.251
@@ -48,16 +46,19 @@
        https://blog.ipsumdomus.com/broadlink-smart-home-devices-complete-protocol-hack-bc0b4b397af1
        https://github.com/sayzard/BroadLinkESP/blob/master/BroadLinkESP.cpp
        https://github.com/mob41/broadlink-java-api/tree/master/src/main/java/com/github/mob41/blapi
+       https://github.com/themillhousegroup/openhab2-addons/blob/960b2194f0c9901f5bc54549c4e0c70821a13e27/bundles/org.openhab.binding.broadlink/src/main/java/org/openhab/binding/broadlink/handler/BroadlinkRemoteModel4Handler.java#L40
+
+       https://github.com/mjg59/python-broadlink/blob/0bd58c6f598fe7239246ad9d61508febea625423/broadlink/__init__.py#L662
 ]]
 
 local PLUGIN_NAME      = 'BroadLink_Mk2'
 local PLUGIN_SID       = 'urn:a-lurker-com:serviceId:'..PLUGIN_NAME..'_1'
-local PLUGIN_VERSION   = '0.57a'
+local PLUGIN_VERSION   = '0.59'
 local THIS_LUL_DEVICE  = nil
 
 -- your WiFi SSID and PASS. Only required if not using the phone
 -- app to pair the BroadLink device. Refer to: sendPairingMsg()
-local SSID             = 'my_SID'
+local SSID             = 'my_SSID'
 local PASS             = 'my_PASS'
 
 local DEV = {
@@ -175,21 +176,24 @@ local plCmds = {
     rfScanForFreq  = 0x1a,   -- cmd = 0x6a, 16 byte payload
     rfStartGetCode = 0x1b,   -- cmd = 0x6a, 16 byte payload
     rfScanForCode  = 0x04,   -- cmd = 0x6a, 16 byte payload   NOTE: same as 'irGetCode'
-    rfLearnStop    = 0x1e    -- cmd = 0x6a, 16 byte payload
+    rfLearnStop    = 0x1e,   -- cmd = 0x6a, 16 byte payload
+    humdAndTempGet = 0x24    -- cmd = 0x6a, 16 byte payload
 }
 
 -- returned data typically starts at the 5th byte (0x04+1) of the payload
 local plData = {
-    status      =  0x04+1,
-    irCodeIdx0  =  0x04+1,
-    rfCodeIdx0  =  0x04+1,
-    rfFoundFlag =  0x04+1,
-    energy      = {msb = 0x07+1, isb = 0x06+1, lsb = 0x05+1},
-    temperature = {msb = 0x04+1, lsb = 0x05+1},
-    humidity    = {msb = 0x06+1, lsb = 0x07+1},
-    lightLevel  =  0x08+1,
-    airQuality  =  0x0a+1,
-    noiseLevel  =  0x0c+1
+    status       =  0x04+1,
+    irCodeIdx0   =  0x04+1,
+    rfCodeIdx0   =  0x04+1,
+    rfFoundFlag  =  0x04+1,
+    energy       = {msb = 0x07+1, isb = 0x06+1, lsb = 0x05+1},
+    temperature  = {msb = 0x04+1, lsb = 0x05+1},
+    humidity     = {msb = 0x06+1, lsb = 0x07+1},
+    lightLevel   =  0x08+1,
+    airQuality   =  0x0a+1,
+    noiseLevel   =  0x0c+1,
+    temperature2 = {msb = 0x06+1, lsb = 0x07+1},
+    humidity2    = {msb = 0x08+1, lsb = 0x09+1}
 }
 
 --[[
@@ -203,7 +207,7 @@ local plData = {
     blDevs[blDeviceType].devs.temp  = getTemperature    -- ptr to getTemperature function
     blDevs[blDeviceType].devs.rf315 = ctrlrRf           -- ptr to ctrlrRf function
     blDevs[blDeviceType].devs.rf433 = ctrlrRf           -- ptr to ctrlrRf function
-    blDevs[blDeviceType].plHdrs     = {0x0004, 0x000da} -- payload protocol headers (when applicable)
+    blDevs[blDeviceType].plPrefix   = 1                 -- insert payload prefix (when applicable = 1)
 ]]
 
 local blDevs = {}
@@ -212,7 +216,7 @@ local blDevs = {}
 blDevices[blId] = {   -- blId, string, the id of a BroadLink physical device: we'll use the BroadLink device's mac address
 
     -- the following is derived from broadcasted discovery process
-    blIp           = ip,                         -- string: ip address of  the host BroadLink device
+    blIp           = ip,                         -- string: ip address of the host BroadLink device
     blDeviceType   = blDeviceType,               -- number: id of the host BroadLink device 'type'
     blDesc         = blDevs[blDeviceType].desc,  -- string: description of the host BroadLink device eg "RM pro", etc
 
@@ -449,20 +453,9 @@ local function validPayloadChecksum(rxMsgTab, payloadTab)
     return payloadCheckum == checksum
 end
 
--- Insert payload header for devices that require it
-local function insertPayloadHeader(payloadTab, type, blId)
-  local plHdrs = blDevs[blDevices[blId].blDeviceType].plHdrs
-  if plHdrs == nil then return end
-
-  for i=#payloadTab, 1, -1 do
-    payloadTab[i+2] = payloadTab[i]
-  end
-  insertMsbLsb(payloadTab, {msb = 0x00+2, lsb = 0x00+1}, plHdrs[type])
-end
-
 -- Remove payload header for devices that require it
 local function removePayloadHeader(payloadTab, blId)
-  local hdrLen = blDevs[blDevices[blId].blDeviceType].plHdrs and 2 or 0
+  local hdrLen = blDevs[blDevices[blId].blDeviceType].plPrefix and 2 or 0
   for i=hdrLen+1, #payloadTab do
     payloadTab[i] = payloadTab[i+hdrLen]
   end
@@ -543,6 +536,7 @@ local function encryptDecrypt(key, input, encrypt)
     local inOut = '-d'
     if (encrypt) then inOut = '-e' end
 
+    -- https://www.openssl.org/docs/man1.1.1/man1/enc.html
     -- https://wiki.openssl.org/index.php/Enc
     local encDecCmdTab = {
     'openssl',
@@ -631,7 +625,7 @@ local function prontoCode2blCode(pCode)
 
     -- blFreqHz:  possibly a watch xtal frequency at 32,768 Hz ????
     local pcFreqHz     = PRONTO_PWM_HZ / pCodeTab[ir.freqDiv]
-    local blFreqHz     = 32836.9140625   -- =(269/8192)*1e6   and (268/8192)*1e6=32714.84375
+    local blFreqHz     = 32836.9140625   -- =(269/8192)*1e6   and (268/8192)*1e6=32714.84375  where 8192 = 2^13
     local freqRatio    = blFreqHz/pcFreqHz
 
     local irCodeTab = {
@@ -961,11 +955,18 @@ local function makeAuthorisationMsg(blId)
 end
 
 -- A simple single byte command message to readWrite.tx = 0x6a
-local function makeSimpleMsg(blId, packetLength, command)
-    local payloadTab = makeEmptyTable(packetLength)
-    payloadTab[0x00+1] = command
-    -- insert payload "request" header
-    insertPayloadHeader(payloadTab, 1, blId)
+local function makeSimpleMsg(blId, command)
+    local payloadTab = makeEmptyTable(0x10)
+
+    local prefix = blDevs[blDevices[blId].blDeviceType].plPrefix
+    if (prefix) then
+        payloadTab[0x00+1] = 0x04
+        payloadTab[0x00+2] = 0x00
+        payloadTab[0x00+3] = command
+    else
+        payloadTab[0x00+1] = command
+    end
+
     return headerAndPayload(blId, payloadTab, blCmds.readWrite.tx)
 end
 
@@ -1016,15 +1017,20 @@ local function makeTxIrRfMsg(blId, irRfCodeTab)
     -- UDP_MAX_PAYLOAD Warning: a host is not required to receive a datagram
     -- larger than 576 byte. So far not an issue with the BroadLink devices.
 
-    -- length of the payload = 0x04 = 4dec + passed in data
-    local payloadTab = makeEmptyTable(0x04)
+    local payloadTab = {}
 
-    -- we'll issue the set command
-    payloadTab[0x00+1] = plCmds.set
+    local prefix = blDevs[blDevices[blId].blDeviceType].plPrefix
+    if (prefix) then
+        payloadTab = makeEmptyTable(0x06)
+        payloadTab[0x00+1] = 0x0d
+        payloadTab[0x00+2] = 0x00
+        payloadTab[0x00+3] = plCmds.set
+    else
+        payloadTab = makeEmptyTable(0x04)
+        payloadTab[0x00+1] = plCmds.set
+    end
 
-    -- Insert "data send" payload header
-    insertPayloadHeader(payloadTab, 2, blId)
-
+    -- append the IR or RF code
     if (irRfCodeTab) then
         -- append the IR/RF data table to the payload table
         for _,v in ipairs(irRfCodeTab) do table.insert(payloadTab, v) end
@@ -1084,14 +1090,16 @@ end
 
 -- Master send and receive with decrypted payload extraction
 local function sendReceive(msgType, txMsgTab, blId)
-    local ok = false
+    local ok = true
+    local pairing = false
+    local ipAddress = ''
+    local key = nil
 
-    -- these values are used by the pairing message
-    local ipAddress = BROADLINK_AP_IP
-    local key       = nil
-
-    -- everything else needs the device's ip address and key
-    if (blId) then
+    if (blId == nil) then
+        -- we don't have an ID for the device until the device is paired
+        pairing = true
+        ipAddress = BROADLINK_AP_IP
+    else -- known device
         ipAddress = blDevices[blId].blIp
         key       = blDevices[blId].blKey
     end
@@ -1111,103 +1119,126 @@ local function sendReceive(msgType, txMsgTab, blId)
     local udp = socket.udp()
     udp:settimeout(MSG_TIMEOUT)
 
-    debug('Sending:  '..msgType..': txMsg length = '..txMsgLen)
+    -- Doco says the first sendto will do this automatically.
+    -- However that seems not to be always the case.
+    udp:setsockname("*",0)
+
+    -- Don't show WiFi details.
+    local above = ' as shown above'
+    if (pairing) then above = '' end
+    debug('Sending "'..msgType..'" message'..above..'. txMsg length is '..txMsgLen)
 
     -- Note: the maximum datagram size for UDP is (potentially) 576 bytes
     local resultTX, errorMsg = udp:sendto(txMsg, ipAddress, UDP_IP_PORT)
 
-    if (resultTX == nil) then debug('TX of '..msgType..' msg to '..ipAddress..' failed: '..errorMsg) udp:close() return ok end
+    if (resultTX == nil) then
+        debug('TX of "'..msgType..'" msg to '..ipAddress..' failed: '..errorMsg)
+        udp:close()
+        return false
+    end
 
     -- Note: aircon codes can be very long. Buffer overruns of rx'ed messages will throw a checksum error.
     local rxMsg, ipOrErrorMsg = udp:receivefrom()
     udp:close()
 
-    if (rxMsg == nil) then debug('RX of '..msgType..' msg response from '..ipAddress..' failed: '..ipOrErrorMsg) return ok end
+    if (rxMsg == nil) then
+        debug('RX of response to "'..msgType..'" msg from '..ipAddress..' failed: '..ipOrErrorMsg)
+        return false
+    end
 
     -- convert the rx'ed msg to a byte table - we like tables
     local rxMsgTab = {}
     for c in rxMsg:gmatch('.') do table.insert(rxMsgTab, string.byte(c)) end
     local rxMsgLen = #rxMsg
 
-    local deviceMsg = string.format('%02x%02x', rxMsgTab[0x25+1], rxMsgTab[0x24+1])
-    local replyMsg  = string.format('%02x%02x', rxMsgTab[0x27+1], rxMsgTab[0x26+1])
-    debug('Broadlink device: '..deviceMsg..' replied with: '..replyMsg)
+    local deviceType = string.format('%02x%02x', rxMsgTab[0x25+1], rxMsgTab[0x24+1])
+    local replyToCmd = string.format('%02x%02x', rxMsgTab[0x27+1], rxMsgTab[0x26+1])
+    debug('Broadlink device type "'..deviceType..'" replied with '..replyToCmd)
+
+    if (rxMsgTab[0x26+1] == blCmds.pairing.rx) then
+       debug('Response to "Pairing" command received sucessfully!',50)
+    end
 
     -- have a look at the error information returned
+    -- 0xfffb means???
     -- 0xfff9 means an error of some sort. Seems to occur if the WiFi signal is marginal. The payload will be nil.
     -- 0xfff6 is returned when no IR/RF code has been learnt? The payload will be nil.
     local errorMsg = string.format('%02x%02x', rxMsgTab[0x23+1], rxMsgTab[0x22+1])
-    if (errorMsg ~= '0000') then debug('Error: errorMsg = '..errorMsg,50) return ok end
+    if (errorMsg ~= '0000') then
+       debug('Error: errorMsg = '..errorMsg,50)
+       ok = false
+    end
     -- HACK if ((errorMsg ~= '0000') and (errorMsg ~= 'fff6')) then debug('Error: errorMsg = '..errorMsg,50) return ok end
 
-    if (not validChecksum(rxMsgTab)) then debug('Error: rx\'ed msg checksum incorrect',50) return ok end
+    -- pairing result doesn't have a checksum
+    if ((not pairing) and (not validChecksum(rxMsgTab))) then
+        debug('Error: checksum of received msg is incorrect',50)
+        ok = false
+    end
 
-    -- get the header ready just for debugging
+    -- get the received header ready just for debugging
     local headerTab = {}
     for i=1, 0x37+1 do headerTab[i] = rxMsgTab[i] end
 
-    -- get the received payload starting at 56d=0x38 (zero based count as per the references)
-    -- it may or may not be (ie "pairing msg response") encrypted
+    -- now get the received payload starting at 56d=0x38 (zero based count as per the references)
     local rxedPayloadTab = {}
     for i = 0x38+1, rxMsgLen do table.insert(rxedPayloadTab, rxMsgTab[i]) end
     if (#rxedPayloadTab == 0) then
-        debug('Received: '..msgType..': rxMsg length = '..tostring(rxMsgLen))
+        debug('Received response to "'..msgType..'" msg is shown below. rxMsg length is '..tostring(rxMsgLen))
         tableDump('No payload found. Header follows:', headerTab)
-        return ok
+        return false
     end
 
     -- decrypt the payload
-    -- The "pairing" message doesn't encrypt/decrypt, so the key passed into this function will be
-    -- nil on that occasion. Before authorisation is completed, the key will equal the "initialKey".
+    -- The "pairing" message doesn't encrypt/decrypt, so the key will be nil on that occasion.
+    -- Before authorisation is completed, the key will equal the "initialKey".
     -- After authorisation it will be the key supplied by the discovery process.
     local payloadTab = {}
-    if (m_doEncodeDecode and key) then
+
+    if (pairing) then -- not encrypted
+        payloadTab = rxedPayloadTab
+    elseif (m_doEncodeDecode) then -- m_doEncodeDecode used for testing purposes only
         payloadTab = encryptDecrypt(key, rxedPayloadTab, false)
-    else  -- payload is not encrypted
+    else  -- don't decode (testing only)
         payloadTab = rxedPayloadTab
     end
 
-    if ((#payloadTab > 0) and (not validPayloadChecksum(rxMsgTab, payloadTab))) then debug('Error: rx\'ed payload checksum incorrect',50) return ok end
+    -- pairing result doesn't have a checksum
+    if ((not pairing) and (#payloadTab > 0) and (not validPayloadChecksum(rxMsgTab, payloadTab))) then
+        debug('Error: checksum of received payload is incorrect',50)
+        ok = false
+    end
 
-    -- show the full received message complete with decrypted payload
-    tableDump('Received: '..msgType..': rxMsg length = '..tostring(rxMsgLen)..' decrypted msg follows:',  headerTab)
-    tableDump('Rx\'ed payload follows:', payloadTab)
+    -- show the full received message. ie header and decrypted payload
+    tableDump('Received response to "'..msgType..'" msg as shown below. rxMsg length is '..tostring(rxMsgLen)..' Decrypted received header follows:',  headerTab)
+    tableDump('Decrypted received payload follows:', payloadTab)
 
-    ok = true
     return ok, payloadTab
 end
 
 --[[
-    Send the "pairing" message to the "BroadLinkProv" AP
-    returns true if the pairing was successful
+    NOT IN USE - TEST PURPOSES ONLY
 
-    NOTE: for this to work your Vera or openLuup device must already be connected to
-    the WiFi AP called "BroadlinkProv".
+    BroadLink use at least a couple of AP SSID names: ie "BroadLinkProv" and "BroadLink_WiFi_Device"
 
-    Right from the start, you should be able to detect the AP with:   ping -c 10  192.168.10.2
+    Right from the start, you should be able to detect the AP with:   ping -c 5  192.168.10.1
 
-    On an Arduino you need to append to this file:
+    This function sends the "pairing" message to the BroadLink AP. Returns true if the pairing was successful.
 
-        /etc/wpa_supplicant/wpa_supplicant.conf
+    NOTE: for this to work your Vera or openLuup device must already be connected to the AP SSID.
 
-    the following:
-
-        # connect to a Broadlink provisioning AP
-        network={
-             ssid="BroadlinkProv"
-             key_mgmt=NONE
-        }
-
-     A reboot of the Arduino is then required. sudo reboot or perhaps just reboot.
-     iwinfo should indicate if the Arduino is connected to the AP before we do the pairing
-
-     -- This code works but is not called. You need to provide your own SID and PASS.
+    This code works but is not called. You need to provide your own SID and PASS.
 ]]
 local function sendPairingMsg()
     -- Use the factory default BroadLink WiFi access point ip address.
     -- Note that the pairing msg contains no payload.
-    -- Note the response contains no checksum
+    -- Note the response contains no checksums
     local ok = sendReceive('Pairing', makePairingMsg())
+    if (ok) then
+        debug('Pairing completed OK!',50)
+    else
+        debug('Pairing failed',50)
+    end
     return ok
 end
 
@@ -1230,8 +1261,10 @@ local function broadcastDiscoverDevicesMsg()
     local BROADCAST_IP = '255.255.255.255'
     -- HACK local MULTICAST_IP = '224.0.0.251'
 
-    -- asterisk represents all the local interfaces on Vera eg Lan, WiFi, etc
-    local setOK, failMsg = udp:setsockname('*', UDP_IP_PORT)
+    -- Doco says the first sendto will do this automatically.
+    -- However that seems not to be always the case.
+    -- Asterisk represents all the local interfaces on Vera eg Lan, WiFi, etc. Port is as picked by the OS.
+    local setOK, failMsg = udp:setsockname('*', 0)
     if (setOK == nil) then
         debug('Set socket name failed: '..failMsg,50)
         udp:close()
@@ -1257,7 +1290,7 @@ local function broadcastDiscoverDevicesMsg()
             addToBroadlinkPhysicalDevicesList(rxMsg, ipOrErrorMsg)
         end
     until (not rxMsg)
-    
+
     local devCnt = 0
     for k,v in pairs(blDevices) do
         devCnt = devCnt+1
@@ -1292,10 +1325,10 @@ local function getAuthorisation()
     end
 end
 
--- Get the temperature from a BroadLink device
+-- Get the temperature from a BroadLink device - older devices
 -- returns true if the get status was successful
 local function getTemperature(blId)
-    local ok, payloadTab = sendReceive('Get temperature', makeSimpleMsg(blId, 0x10, plCmds.get), blId)
+    local ok, payloadTab = sendReceive('Get temperature', makeSimpleMsg(blId, plCmds.get), blId)
     if (not ok) then return ok end
 
     -- extract the msb temperature status from the payload
@@ -1306,6 +1339,40 @@ local function getTemperature(blId)
     local temperature = msb + payloadTab[plData.temperature.lsb]/10
 
     return ok, temperature
+end
+
+-- Get the temperature from a BroadLink device - more recent devices
+-- returns true if the get status was successful
+local function getTemperature2(blId)
+    local ok, payloadTab = sendReceive('Get humidity and temperature', makeSimpleMsg(blId, plCmds.humdAndTempGet), blId)
+    if (not ok) then return ok end
+
+    -- extract the msb temperature status from the payload
+    local msb = payloadTab[plData.temperature2.msb]
+    local temperature = msb + payloadTab[plData.temperature2.lsb]/100
+
+    -- round the results to some more realistic precision
+    temperature = string.format("%.1f", temperature)
+    debug('Temperature: '..temperature)
+
+    return ok, temperature
+end
+
+-- Get the humidity from a BroadLink device
+-- returns true if the get status was successful
+local function getHumidity2(blId)
+    local ok, payloadTab = sendReceive('Get humidity and temperature', makeSimpleMsg(blId, plCmds.humdAndTempGet), blId)
+    if (not ok) then return ok end
+
+    -- extract the msb humidity status from the payload
+    local msb = payloadTab[plData.humidity2.msb]
+    local humidity = msb + payloadTab[plData.humidity2.lsb]/100
+
+    -- round the results to some more realistic precision
+    humidity = string.format("%.0f", humidity)
+    debug('Humidity: '..humidity)
+
+    return ok, humidity
 end
 
 -- Get the energy from a BroadLink device
@@ -1353,7 +1420,7 @@ local function updateStatus(blId, lul_device, relay)
         -- Do SP1s make their status available? - seems that they don't. So there is nothing to do.
         return true
     else -- single relay and maybe a night light: refer SP3
-        ok, payloadTab = sendReceive('Get status: single relay', makeSimpleMsg(blId, 0x10, plCmds.get), blId)
+        ok, payloadTab = sendReceive('Get status: single relay', makeSimpleMsg(blId, plCmds.get), blId)
         if (not ok) then return ok end
 
         local result = payloadTab[plData.status]
@@ -1378,7 +1445,7 @@ function scanningForBroadlinkIrCode(blId)
     if (m_IRScanCount <= 0) then m_PollEnable = m_PollLastState return end
 
     -- send the "have we got a learnt code" command
-    local ok, payloadTab = sendReceive('Scanning for learnt code', makeSimpleMsg(blId, 0x10, plCmds.irGetCode), blId)
+    local ok, payloadTab = sendReceive('Scanning for learnt code', makeSimpleMsg(blId, plCmds.irGetCode), blId)
 
     -- Keep scanning if no message is Rx'ed or the returned errorMsg ~= '0000'. Note that the returned errorMsg
     -- can be '0xfff6', which appears to indicate that no IR code has been found so far: Refer to sendreceive()
@@ -1410,7 +1477,7 @@ local function lookForLearntIrCode(blId)
     updateVariable('LearntIRCode', 'No IR code was learnt')
 
     -- enter learning mode
-    local ok, payloadTab = sendReceive('Start IR learn', makeSimpleMsg(blId, 0x10, plCmds.irLearnStart), blId)
+    local ok, payloadTab = sendReceive('Start IR learn', makeSimpleMsg(blId, plCmds.irLearnStart), blId)
     if (not ok) then m_PollEnable = m_PollLastState return end
 
     -- Note: the Broadlink RM PRO & RM Mini 3 automatically stop the IR learning mode after 30 seconds
@@ -1433,7 +1500,7 @@ function lookForLearntBroadlinkRfCode(blId)
         -- Enter RF frequency learning mode. The reply payload is just the TX'ed command echoed back, plus 15 0x00s to make up 16 bytes for AES.
         -- That is: 0x19 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
         debug('Starting learning process',50)
-        local ok, payloadTab = sendReceive('Start frequency learn', makeSimpleMsg(blId, 0x10, plCmds.rfStartGetFreq), blId)
+        local ok, payloadTab = sendReceive('Start frequency learn', makeSimpleMsg(blId, plCmds.rfStartGetFreq), blId)
 
         if (ok) then
             debug('Frequency learning has started: tap the button on the remote every second or so...',50)
@@ -1453,7 +1520,7 @@ function lookForLearntBroadlinkRfCode(blId)
         -- Found:     0x1A 0x00 0x00 0x00 0x01 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
         -- Given up:  0x1A 0x00 0x00 0x00 0x04 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
         debug('Scanning for frequency',50)
-        local ok, payloadTab = sendReceive('Scanning for the remote\'s frequency', makeSimpleMsg(blId, 0x10, plCmds.rfScanForFreq), blId)
+        local ok, payloadTab = sendReceive('Scanning for the remote\'s frequency', makeSimpleMsg(blId, plCmds.rfScanForFreq), blId)
 
         if (ok and payloadTab and (payloadTab[plData.rfFoundFlag] == 0x01)) then
             debug('The remote\'s frequency has been found!',50)
@@ -1472,7 +1539,7 @@ function lookForLearntBroadlinkRfCode(blId)
         -- plus a Flag is at 0x04+1, plus 15 0x00s to make up 16 bytes for AES.
         -- That is: 0x1B 0x00 0x00 0x00 0x01 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
         debug('Code learning has started: keep tapping the button on the remote every second or so...',50)
-        local ok, payloadTab = sendReceive('Start code learn', makeSimpleMsg(blId, 0x10, plCmds.rfStartGetCode), blId)
+        local ok, payloadTab = sendReceive('Start code learn', makeSimpleMsg(blId, plCmds.rfStartGetCode), blId)
 
         if (ok) then
             -- check for a learnt RF code every 2 seconds for 2*12=24 seconds
@@ -1488,7 +1555,7 @@ function lookForLearntBroadlinkRfCode(blId)
         -- Enter step 2 of RF learning. This checks for the RF code.
         -- The reply is either the error code 0xfff6 with no payload or the detected RF code.
         debug('Scanning for code',50)
-        local ok, payloadTab = sendReceive('Scanning for the remote\'s code', makeSimpleMsg(blId, 0x10, plCmds.rfScanForCode), blId)
+        local ok, payloadTab = sendReceive('Scanning for the remote\'s code', makeSimpleMsg(blId, plCmds.rfScanForCode), blId)
 
         if (ok and payloadTab) then
             debug('A remote code found! But will it work?',50)
@@ -1508,7 +1575,7 @@ function lookForLearntBroadlinkRfCode(blId)
         -- Scan complete. Stop the scanning. The reply payload is just the TX'ed command echoed back, plus 15 0x00s to make up 16 bytes for AES.
         -- That is: 0x1E 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
         debug('Code learning has sucessfully finished',50)
-        local ok, payloadTab = sendReceive('Stop RF learn', makeSimpleMsg(blId, 0x10, plCmds.rfLearnStop), blId)
+        local ok, payloadTab = sendReceive('Stop RF learn', makeSimpleMsg(blId, plCmds.rfLearnStop), blId)
         m_PollEnable = m_PollLastState
         return   -- success!!
 
@@ -1528,7 +1595,7 @@ function lookForLearntBroadlinkRfCode(blId)
     if (m_RfScanningState == RF.ABORT_2) then
         -- No msg rx'ed. Scanning failed to get a learnt frequency or code.
         debug('RF code learning failed to get a frequency and/or code',50)
-        local ok, payloadTab = sendReceive('Stop RF learn', makeSimpleMsg(blId, 0x10, plCmds.rfLearnStop), blId)
+        local ok, payloadTab = sendReceive('Stop RF learn', makeSimpleMsg(blId, plCmds.rfLearnStop), blId)
         m_PollEnable = m_PollLastState
         return
     end
@@ -1761,6 +1828,7 @@ local function setBlLabels()
 
     -- compliments of bblacey - thank you: devices with new leadin arrangements:
     [0x51da] = {desc = 'RM4 Mini'              },
+    [0x520c] = {desc = 'RM4 Mini S'            },
     [0x5f36] = {desc = 'RM3 Mini'              },
     [0x6026] = {desc = 'RM4 Pro'               },
     [0x6070] = {desc = 'RM4 Mini'              },
@@ -1861,39 +1929,45 @@ local function setDeviceConfiguration()
     ptr = blDevs[0x4e4d].devs                                  -- 'RM2 Pro Plus PP'
         ptr.ir   = ctrlrRf                                     --
         ptr.temp = getTemperature                              --
-    
+
+    ptr = blDevs[0x520c]                                       -- 'RM4 Mini S'
+        ptr.plPrefix      = 1                                  --
+        ptr.devs.ir       = ctrlrRf                            --
+        ptr.devs.temp     = getTemperature2                    --
+        ptr.devs.humidity = getHumidity2                       --
+
     -- compliments of bblacey - thank you: devices with new leadin arrangements:
-    blDevs[0x51da].devs.ir = ctrlrRf                           -- 'RM4b Mini'
-    blDevs[0x51da].plHdrs  = {0x0004, 0x000d}                  --
-    blDevs[0x5f36].devs.ir = ctrlrRf                           -- 'RM3  Mini'
-    blDevs[0x5f36].plHdrs  = {0x0004, 0x000d}                  --
-    blDevs[0x6026].devs.ir = ctrlrRf                           -- 'RM4 Pro'
-    blDevs[0x6026].plHdrs  = {0x0004, 0x000d}                  --
-    blDevs[0x6070].devs.ir = ctrlrRf                           -- 'RM4 Pro'
-    blDevs[0x6070].plHdrs  = {0x0004, 0x000d}                  --
-    blDevs[0x610e].devs.ir = ctrlrRf                           -- 'RM4? Mini'
-    blDevs[0x610e].plHdrs  = {0x0004, 0x000d}                  --
-    blDevs[0x610f].devs.ir = ctrlrRf                           -- 'RM4c Mini'
-    blDevs[0x610f].plHdrs  = {0x0004, 0x000d}                  --
-    blDevs[0x61a2].devs.ir = ctrlrRf                           -- 'RM4 Pro'
-    blDevs[0x61a2].plHdrs  = {0x0004, 0x000d}                  --
-    blDevs[0x62bc].devs.ir = ctrlrRf                           -- 'RM4c Mini'
-    blDevs[0x62bc].plHdrs  = {0x0004, 0x000d}                  --
-    blDevs[0x62be].devs.ir = ctrlrRf                           -- 'RM4c Mini'
-    blDevs[0x62be].plHdrs  = {0x0004, 0x000d}                  --
+    blDevs[0x51da].devs.ir  = ctrlrRf                          -- 'RM4b Mini'
+    blDevs[0x51da].plPrefix = 1                                --
+    blDevs[0x5f36].devs.ir  = ctrlrRf                          -- 'RM3  Mini'
+    blDevs[0x5f36].plPrefix = 1                                --
+    blDevs[0x6026].devs.ir  = ctrlrRf                          -- 'RM4 Pro'
+    blDevs[0x6026].plPrefix = 1                                --
+    blDevs[0x6070].devs.ir  = ctrlrRf                          -- 'RM4 Pro'
+    blDevs[0x6070].plPrefix = 1                                --
+    blDevs[0x610e].devs.ir  = ctrlrRf                          -- 'RM4? Mini'
+    blDevs[0x610e].plPrefix = 1                                --
+    blDevs[0x610f].devs.ir  = ctrlrRf                          -- 'RM4c Mini'
+    blDevs[0x610f].plPrefix = 1                                --
+    blDevs[0x61a2].devs.ir  = ctrlrRf                          -- 'RM4 Pro'
+    blDevs[0x61a2].plPrefix = 1                                --
+    blDevs[0x62bc].devs.ir  = ctrlrRf                          -- 'RM4c Mini'
+    blDevs[0x62bc].plPrefix = 1                                --
+    blDevs[0x62be].devs.ir  = ctrlrRf                          -- 'RM4c Mini'
+    blDevs[0x62be].plPrefix = 1                                --
 
     -- April 2021
     ptr = blDevs[0x649b].devs                                  -- 'RM4 Pro'
         ptr.ir    = ctrlrRf                                    --
         ptr.rf315 = ctrlrRf                                    --
         ptr.rf433 = ctrlrRf                                    --
-    blDevs[0x649b].plHdrs  = {0x0004, 0x000d}                  --
+    blDevs[0x649b].plPrefix = 1                                --
 
     ptr = blDevs[0x653c].devs                                  -- 'RM4 Pro'
         ptr.ir    = ctrlrRf                                    --
         ptr.rf315 = ctrlrRf                                    --
         ptr.rf433 = ctrlrRf                                    --
-    blDevs[0x653c].plHdrs  = {0x0004, 0x000d}                  --
+    blDevs[0x653c].plPrefix = 1                                --
 
 --[[
     Other BroadLink devices:
@@ -1985,15 +2059,16 @@ function pollBroadLinkDevices()
         local veraId     = v.veraId
         local veraDevice = v.veraDevice
         local veraFunc   = v.veraFunc   -- look up the function to be used for this device
+        local result     = nil
 
         -- make sure we have a BroadLink device and an associated function and then go poll all the sensors found
         if (blId and veraFunc and veraDevice) then
-            if     (veraDevice == DEV.DOOR_SENSOR)        then updateVariable('Tripped',      veraFunc(blId), SID.DOOR_SENSOR,     veraId)
-            elseif (veraDevice == DEV.GENERIC_SENSOR)     then updateVariable('CurrentLevel', veraFunc(blId), SID.GENERIC_SENSOR,  veraId)
-            elseif (veraDevice == DEV.HUMIDITY_SENSOR)    then updateVariable('CurrentLevel', veraFunc(blId), SID.HUMIDITY_SENSOR, veraId)
-            elseif (veraDevice == DEV.LIGHT_SENSOR)       then updateVariable('CurrentLevel', veraFunc(blId), SID.LIGHT_SENSOR,    veraId)
-            elseif (veraDevice == DEV.MOTION_SENSOR)      then updateVariable('Tripped',      veraFunc(blId), SID.MOTION_SENSOR,   veraId)
-            elseif (veraDevice == DEV.SMOKE_SENSOR)       then updateVariable('Tripped',      veraFunc(blId), SID.SMOKE_SENSOR,    veraId)
+            if     (veraDevice == DEV.DOOR_SENSOR)        then _, result = veraFunc(blId) updateVariable('Tripped',      result, SID.DOOR_SENSOR,     veraId)
+            elseif (veraDevice == DEV.GENERIC_SENSOR)     then _, result = veraFunc(blId) updateVariable('CurrentLevel', result, SID.GENERIC_SENSOR,  veraId)
+            elseif (veraDevice == DEV.HUMIDITY_SENSOR)    then _, result = veraFunc(blId) updateVariable('CurrentLevel', result, SID.HUMIDITY_SENSOR, veraId)
+            elseif (veraDevice == DEV.LIGHT_SENSOR)       then _, result = veraFunc(blId) updateVariable('CurrentLevel', result, SID.LIGHT_SENSOR,    veraId)
+            elseif (veraDevice == DEV.MOTION_SENSOR)      then _, result = veraFunc(blId) updateVariable('Tripped',      result, SID.MOTION_SENSOR,   veraId)
+            elseif (veraDevice == DEV.SMOKE_SENSOR)       then _, result = veraFunc(blId) updateVariable('Tripped',      result, SID.SMOKE_SENSOR,    veraId)
             elseif (veraDevice == DEV.TEMPERATURE_SENSOR) then
 
                 -- This is a pretty crude correction and is only likely to be close to accurate at one particular
