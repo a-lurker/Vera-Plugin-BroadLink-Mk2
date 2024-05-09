@@ -43,7 +43,7 @@ Typically a user would find the device in the BroadLink app and go from there. H
 ## Switching from AP mode to slave/paired mode
 You need to switch the device from AP mode to slave mode, so the plugin can be used. There are couple of ways this can be done:
 
-1. Use any other convenient computer to connect to the BroadLink device, while it's in AP mode. Then on that computer, execute the [switch-from-ap-mode-to-slave-mode.lua](https://github.com/a-lurker/Vera-Plugin-BroadLink-Mk2/tree/master/pairing) script to place the BroadLink device into slave mode.
+1. Use any other convenient computer to connect to the BroadLink device, while it's in AP mode. Then on that computer, execute the [switch-from-ap-mode-to-slave-mode.lua](https://github.com/a-lurker/Vera-Plugin-BroadLink-Mk2/tree/master/Pairing) script to place the BroadLink device into slave mode.
 
     A Lua interpreter needs to be installed on the computer linked to the access point. eg for a PC, see [Lua for windows](https://github.com/rjpcomputing/luaforwindows).
 
@@ -85,7 +85,7 @@ Many learnt codes have excessive replication and some codes are not replicated e
 
 RC5, RC6 and MCE codes use a toggle bit, which cause havoc with learnt codes. The [Virtual Pronto Remote plugin](https://github.com/a-lurker/Vera-Plugin-Virtual-Pronto-Remote)  can handle these in conjunction with this BroadLink plugin.
 
-For codes refer to [Remote Central](www.remotecentral.com).
+For codes refer to [Remote Central](https://www.remotecentral.com).
 
 ## Logging
 Logging can be enabled by setting the DebugEnabled flag to '1'. You can use AltUI plugin with Vera to look at the log file:
